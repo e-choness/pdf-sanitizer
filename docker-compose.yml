@@ -1,6 +1,8 @@
 services:
   pdf-sanitizer:
-    build: .
+    build:
+      context: .
+      target: builder
     container_name: pdf-sanitizer-dev
     volumes:
       - .:/app

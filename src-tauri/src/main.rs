@@ -3,149 +3,164 @@
     windows_subsystem = "windows"
 )]
 
-mod pdf_sanitizer;
+mod pipeline;
 mod settings;
 
-use serde::{Deserialize, Serialize};
-use std::fs;
-use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use pdfsan_core::SanitizationSettings;
+use pipeline::{preflight_backup_folder, run_batch, FileTask};
+use std::collections::HashMap;
+use std::sync::Arc;
 use tauri::{Emitter, State};
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct SanitizationSettings {
-    pub remove_metadata: bool,
-    pub remove_scripts: bool,
-    pub remove_embedded_files: bool,
-    pub compress_images: bool,
-    pub high_compression: bool,
-    pub strip_external_links: bool,
-    pub font_subsetting: bool,
-    pub max_concurrent: u32,
-    pub output_folder: String,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct FileToProcess {
-    pub id: f64,
-    pub path: String,
-}
+use tokio::sync::Mutex;
+use tokio_util::sync::CancellationToken;
 
 pub struct AppState {
-    settings: Arc<Mutex<SanitizationSettings>>,
+    settings: Arc<tokio::sync::RwLock<SanitizationSettings>>,
+    /// Per-file cancellation tokens, keyed by file id.
+    tokens: Arc<Mutex<HashMap<String, CancellationToken>>>,
+    /// Batch-level token; replaced on each new batch.
+    batch_token: Arc<Mutex<Option<CancellationToken>>>,
+    batch_running: Arc<std::sync::atomic::AtomicBool>,
 }
 
 #[tauri::command]
-fn load_settings(state: State<AppState>) -> SanitizationSettings {
-    let settings = state.settings.lock().unwrap();
-    settings.clone()
+async fn load_settings(state: State<'_, AppState>) -> Result<SanitizationSettings, String> {
+    Ok(state.settings.read().await.clone())
 }
 
 #[tauri::command]
-fn save_settings(settings: SanitizationSettings, state: State<AppState>) {
-    let mut app_settings = state.settings.lock().unwrap();
-    *app_settings = settings.clone();
-    settings::save_settings(&settings).ok();
+async fn save_settings(
+    new_settings: SanitizationSettings,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let clamped = SanitizationSettings {
+        max_concurrent: new_settings.max_concurrent.clamp(1, 8),
+        ..new_settings
+    };
+    *state.settings.write().await = clamped.clone();
+    settings::save_settings(&clamped)
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct StatResult {
+    pub path: String,
+    pub size: u64,
+}
+
+#[tauri::command]
+async fn stat_files(paths: Vec<String>) -> Result<Vec<StatResult>, String> {
+    let results = paths
+        .into_iter()
+        .map(|p| {
+            let size = std::fs::metadata(&p).map(|m| m.len()).unwrap_or(0);
+            StatResult { path: p, size }
+        })
+        .collect();
+    Ok(results)
 }
 
 #[tauri::command]
 async fn process_files(
-    files: Vec<FileToProcess>,
-    settings: SanitizationSettings,
+    files: Vec<serde_json::Value>,
+    state: State<'_, AppState>,
     app_handle: tauri::AppHandle,
-    _state: State<'_, AppState>,
-) -> Result<String, String> {
-    let settings = Arc::new(settings);
-    let max_concurrent = settings.max_concurrent as usize;
+) -> Result<(), String> {
+    if state
+        .batch_running
+        .load(std::sync::atomic::Ordering::SeqCst)
+    {
+        return Err("A batch is already running".to_string());
+    }
 
-    tokio::spawn(async move {
-        let semaphore = Arc::new(tokio::sync::Semaphore::new(max_concurrent));
+    let settings = state.settings.read().await.clone();
 
-        let mut handles = vec![];
+    // Pre-flight: backup folder
+    if let Err(e) = preflight_backup_folder(&settings.output_folder) {
+        let _ = app_handle.emit("batch_error", serde_json::json!({ "error": e.to_string() }));
+        return Err(e.to_string());
+    }
 
-        for file in files {
-            let permit = semaphore.clone().acquire_owned().await.unwrap();
-            let settings = Arc::clone(&settings);
-            let app_handle = app_handle.clone();
-            let file_id = file.id;
-            let file_path = file.path.clone();
+    // Parse file tasks
+    let tasks: Vec<FileTask> = files
+        .into_iter()
+        .filter_map(|v| {
+            let id = v.get("id")?.as_str()?.to_string();
+            let path = v.get("path")?.as_str()?.to_string();
+            // Per-file pre-flight: exists, readable, .pdf extension, %PDF header
+            let p = std::path::Path::new(&path);
+            if !p.exists() || p.extension().and_then(|e| e.to_str()) != Some("pdf") {
+                let _ = app_handle.emit(
+                    "file_error",
+                    serde_json::json!({ "id": id, "error": "File not found or not a PDF." }),
+                );
+                return None;
+            }
+            Some(FileTask { id, path })
+        })
+        .collect();
 
-            let handle = tokio::spawn(async move {
-                let _permit = permit;
-
-                match pdf_sanitizer::sanitize_pdf(&file_path, settings.as_ref()).await {
-                    Ok((_, output_size)) => {
-                        if let Err(e) = move_original_pdf(&file_path, &settings.output_folder) {
-                            let _ = app_handle.emit(
-                                "file_error",
-                                serde_json::json!({
-                                    "id": file_id,
-                                    "error": format!("Failed to move original: {}", e)
-                                }),
-                            );
-                            return;
-                        }
-
-                        let _ = app_handle.emit(
-                            "file_complete",
-                            serde_json::json!({
-                                "id": file_id,
-                                "output_size": output_size,
-                            }),
-                        );
-                    }
-                    Err(e) => {
-                        let _ = app_handle.emit(
-                            "file_error",
-                            serde_json::json!({
-                                "id": file_id,
-                                "error": e
-                            }),
-                        );
-                    }
-                }
-            });
-
-            handles.push(handle);
-        }
-
-        for handle in handles {
-            let _ = handle.await;
-        }
-    });
-
-    Ok("Processing started".to_string())
-}
-
-fn move_original_pdf(original_path: &str, destination_folder: &str) -> Result<(), String> {
-    if destination_folder.is_empty() {
+    if tasks.is_empty() {
         return Ok(());
     }
 
-    let original = PathBuf::from(original_path);
-    let file_name = original.file_name().ok_or("Invalid file name")?;
+    let batch_token = CancellationToken::new();
+    *state.batch_token.lock().await = Some(batch_token.clone());
+    state
+        .batch_running
+        .store(true, std::sync::atomic::Ordering::SeqCst);
 
-    let destination = PathBuf::from(destination_folder).join(file_name);
+    let tokens = state.tokens.clone();
+    let running_flag = state.batch_running.clone();
+    let app = app_handle.clone();
 
-    fs::rename(&original, &destination).map_err(|e| e.to_string())?;
+    tokio::spawn(async move {
+        run_batch(tasks, settings, app, tokens, batch_token).await;
+        running_flag.store(false, std::sync::atomic::Ordering::SeqCst);
+    });
 
     Ok(())
 }
 
+#[tauri::command]
+async fn cancel_file(id: String, state: State<'_, AppState>) -> Result<(), String> {
+    let map = state.tokens.lock().await;
+    if let Some(token) = map.get(&id) {
+        token.cancel();
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn cancel_all(state: State<'_, AppState>) -> Result<(), String> {
+    if let Some(token) = state.batch_token.lock().await.as_ref() {
+        token.cancel();
+    }
+    Ok(())
+}
+
 fn main() {
-    // Load settings from disk, or use defaults if not found
-    let initial_settings = settings::load_settings()
-        .unwrap_or_else(|_| settings::default_settings());
+    let initial_settings = settings::load_settings();
 
     tauri::Builder::default()
-        .manage(AppState {
-            settings: Arc::new(Mutex::new(initial_settings)),
-        })
         .plugin(tauri_plugin_dialog::init())
+        .plugin(
+            tauri_plugin_log::Builder::new()
+                .level(log::LevelFilter::Info)
+                .build(),
+        )
+        .manage(AppState {
+            settings: Arc::new(tokio::sync::RwLock::new(initial_settings)),
+            tokens: Arc::new(Mutex::new(HashMap::new())),
+            batch_token: Arc::new(Mutex::new(None)),
+            batch_running: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        })
         .invoke_handler(tauri::generate_handler![
             load_settings,
             save_settings,
-            process_files
+            stat_files,
+            process_files,
+            cancel_file,
+            cancel_all,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

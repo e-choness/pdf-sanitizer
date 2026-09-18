@@ -1,276 +1,400 @@
 <script>
-	import { createEventDispatcher } from 'svelte';
+  import { invoke } from '@tauri-apps/api/core';
+  import { settings, batchRunning } from '../lib/store.js';
 
-	export let settings;
-	export let selectFolder;
+  export let selectFolder;
 
-	const dispatch = createEventDispatcher();
+  let saveTimer;
 
-	function handleToggle(key) {
-		settings[key] = !settings[key];
-		dispatch('change', settings);
-	}
+  function queueSave() {
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => {
+      invoke('save_settings', { newSettings: $settings }).catch(console.error);
+    }, 300);
+  }
 
-	function handleConcurrentChange(delta) {
-		const newValue = settings.maxConcurrent + delta;
-		if (newValue >= 1 && newValue <= 8) {
-			settings.maxConcurrent = newValue;
-			dispatch('change', settings);
-		}
-	}
+  function setQuality(q) {
+    $settings = { ...$settings, imageQuality: q };
+    queueSave();
+  }
 
-	async function handleSelectFolder() {
-		await selectFolder();
-		dispatch('change', settings);
-	}
+  function decConcurrent() {
+    if ($settings.maxConcurrent <= 1) return;
+    $settings = { ...$settings, maxConcurrent: $settings.maxConcurrent - 1 };
+    queueSave();
+  }
+
+  function incConcurrent() {
+    if ($settings.maxConcurrent >= 8) return;
+    $settings = { ...$settings, maxConcurrent: $settings.maxConcurrent + 1 };
+    queueSave();
+  }
 </script>
 
-<div class="settings-panel">
-	<div class="settings-content">
-		<h2>Sanitization Options</h2>
+<aside class="panel">
+  <div class="panel-header">Settings</div>
 
-		<div class="setting-group">
-			<label class="setting-item">
-				<input
-					type="checkbox"
-					checked={settings.removeMetadata}
-					on:change={() => handleToggle('removeMetadata')}
-				/>
-				<span>Remove Metadata</span>
-			</label>
-			<p class="setting-desc">Removes author, creation date, and document properties</p>
-		</div>
+  <div class="section">
+    <div class="section-label">Content</div>
 
-		<div class="setting-group">
-			<label class="setting-item">
-				<input
-					type="checkbox"
-					checked={settings.removeScripts}
-					on:change={() => handleToggle('removeScripts')}
-				/>
-				<span>Remove Scripts</span>
-			</label>
-			<p class="setting-desc">Disables JavaScript and interactive elements</p>
-		</div>
+    <label class="row" class:disabled={$batchRunning}>
+      <div class="row-text">
+        <span class="row-title">Remove metadata</span>
+        <span class="row-sub">Author, dates, software</span>
+      </div>
+      <button
+        role="switch"
+        aria-checked={$settings.removeMetadata}
+        aria-label="Remove metadata"
+        class="switch"
+        class:on={$settings.removeMetadata}
+        disabled={$batchRunning}
+        on:click={() => { $settings = { ...$settings, removeMetadata: !$settings.removeMetadata }; queueSave(); }}
+      ></button>
+    </label>
 
-		<div class="setting-group">
-			<label class="setting-item">
-				<input
-					type="checkbox"
-					checked={settings.removeEmbeddedFiles}
-					on:change={() => handleToggle('removeEmbeddedFiles')}
-				/>
-				<span>Remove Embedded Files</span>
-			</label>
-			<p class="setting-desc">Removes attachments and embedded objects</p>
-		</div>
+    <label class="row" class:disabled={$batchRunning}>
+      <div class="row-text">
+        <span class="row-title">Remove scripts</span>
+        <span class="row-sub">JavaScript and actions</span>
+      </div>
+      <button
+        role="switch"
+        aria-checked={$settings.removeScripts}
+        aria-label="Remove scripts"
+        class="switch"
+        class:on={$settings.removeScripts}
+        disabled={$batchRunning}
+        on:click={() => { $settings = { ...$settings, removeScripts: !$settings.removeScripts }; queueSave(); }}
+      ></button>
+    </label>
 
-		<div class="divider"></div>
+    <label class="row" class:disabled={$batchRunning}>
+      <div class="row-text">
+        <span class="row-title">Remove embedded files</span>
+        <span class="row-sub">Attachments and streams</span>
+      </div>
+      <button
+        role="switch"
+        aria-checked={$settings.removeEmbeddedFiles}
+        aria-label="Remove embedded files"
+        class="switch"
+        class:on={$settings.removeEmbeddedFiles}
+        disabled={$batchRunning}
+        on:click={() => { $settings = { ...$settings, removeEmbeddedFiles: !$settings.removeEmbeddedFiles }; queueSave(); }}
+      ></button>
+    </label>
 
-		<div class="setting-group">
-			<label class="setting-item">
-				<input
-					type="checkbox"
-					checked={settings.stripExternalLinks}
-					on:change={() => handleToggle('stripExternalLinks')}
-				/>
-				<span>Strip External Links</span>
-			</label>
-			<p class="setting-desc">Removes URLs and external references</p>
-		</div>
+    <label class="row" class:disabled={$batchRunning}>
+      <div class="row-text">
+        <span class="row-title">Strip external links</span>
+        <span class="row-sub">Remove outbound URLs</span>
+      </div>
+      <button
+        role="switch"
+        aria-checked={$settings.stripExternalLinks}
+        aria-label="Strip external links"
+        class="switch"
+        class:on={$settings.stripExternalLinks}
+        disabled={$batchRunning}
+        on:click={() => { $settings = { ...$settings, stripExternalLinks: !$settings.stripExternalLinks }; queueSave(); }}
+      ></button>
+    </label>
 
-		<div class="setting-group">
-			<label class="setting-item">
-				<input
-					type="checkbox"
-					checked={settings.fontSubsetting}
-					on:change={() => handleToggle('fontSubsetting')}
-				/>
-				<span>Font Subsetting</span>
-			</label>
-			<p class="setting-desc">Embeds only used glyphs to reduce file size</p>
-		</div>
+    <label class="row" class:disabled={$batchRunning}>
+      <div class="row-text">
+        <span class="row-title">Font subsetting</span>
+        <span class="row-sub">Keep only used glyphs</span>
+      </div>
+      <button
+        role="switch"
+        aria-checked={$settings.fontSubsetting}
+        aria-label="Font subsetting"
+        class="switch"
+        class:on={$settings.fontSubsetting}
+        disabled={$batchRunning}
+        on:click={() => { $settings = { ...$settings, fontSubsetting: !$settings.fontSubsetting }; queueSave(); }}
+      ></button>
+    </label>
+  </div>
 
-		<div class="setting-group">
-			<label class="setting-item">
-				<input
-					type="checkbox"
-					checked={settings.compressImages}
-					on:change={() => handleToggle('compressImages')}
-				/>
-				<span>Compress Images</span>
-			</label>
-			<p class="setting-desc">Reduces image quality for smaller files</p>
-		</div>
+  <div class="section">
+    <div class="section-label">Images</div>
 
-		<div class="divider"></div>
+    <label class="row" class:disabled={$batchRunning}>
+      <div class="row-text">
+        <span class="row-title">Compress images</span>
+        <span class="row-sub">Re-encode to JPEG</span>
+      </div>
+      <button
+        role="switch"
+        aria-checked={$settings.compressImages}
+        aria-label="Compress images"
+        class="switch"
+        class:on={$settings.compressImages}
+        disabled={$batchRunning}
+        on:click={() => { $settings = { ...$settings, compressImages: !$settings.compressImages }; queueSave(); }}
+      ></button>
+    </label>
 
-		<h2>Advanced</h2>
+    {#if $settings.compressImages}
+      <div class="quality-row">
+        <span class="row-sub">Quality</span>
+        <div class="segmented">
+          {#each ['low', 'medium', 'high'] as q}
+            <button
+              class="seg-btn"
+              class:active={$settings.imageQuality === q}
+              disabled={$batchRunning}
+              on:click={() => setQuality(q)}
+            >
+              {q[0].toUpperCase() + q.slice(1)}
+            </button>
+          {/each}
+        </div>
+      </div>
+    {/if}
+  </div>
 
-		<div class="setting-group">
-			<label class="setting-label">
-				Output Folder:
-				<div class="folder-selector">
-					<input
-						type="text"
-						value={settings.outputFolder}
-						readonly
-						placeholder="Click to select..."
-					/>
-					<button on:click={handleSelectFolder} class="select-folder-btn">
-						Browse
-					</button>
-				</div>
-			</label>
-			<p class="setting-desc">Original PDFs will be moved here after processing</p>
-		</div>
+  <div class="section">
+    <div class="section-label">Performance</div>
 
-		<div class="setting-group">
-			<label class="setting-label">
-				Concurrent Processing:
-				<div class="concurrent-control">
-					<button on:click={() => handleConcurrentChange(-1)} class="ctrl-btn">
-						−
-					</button>
-					<span class="concurrent-value">{settings.maxConcurrent}</span>
-					<button on:click={() => handleConcurrentChange(1)} class="ctrl-btn">
-						+
-					</button>
-				</div>
-			</label>
-			<p class="setting-desc">Number of files to process simultaneously (1-8)</p>
-		</div>
-	</div>
-</div>
+    <div class="row">
+      <div class="row-text">
+        <span class="row-title">Concurrent files</span>
+        <span class="row-sub">Files processed in parallel</span>
+      </div>
+      <div class="stepper">
+        <button class="step-btn" on:click={decConcurrent} disabled={$settings.maxConcurrent <= 1 || $batchRunning}>−</button>
+        <span class="step-val">{$settings.maxConcurrent}</span>
+        <button class="step-btn" on:click={incConcurrent} disabled={$settings.maxConcurrent >= 8 || $batchRunning}>+</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-label">Output</div>
+
+    <div class="folder-row">
+      <div class="row-text">
+        <span class="row-title">Backup folder</span>
+        <span class="row-sub">Originals are moved here</span>
+      </div>
+      <button class="folder-pick-btn" on:click={selectFolder} disabled={$batchRunning}>
+        {#if $settings.outputFolder}
+          {$settings.outputFolder.split(/[\\/]/).pop() || $settings.outputFolder}
+        {:else}
+          Choose…
+        {/if}
+      </button>
+    </div>
+    {#if !$settings.outputFolder}
+      <p class="folder-warn">A backup folder is required to sanitize files.</p>
+    {/if}
+  </div>
+</aside>
 
 <style>
-	.settings-panel {
-		width: 300px;
-		background: white;
-		border-left: 1px solid #e0e0e0;
-		overflow-y: auto;
-		padding: 20px;
-	}
+  .panel {
+    height: 100vh;
+    overflow-y: auto;
+    background: var(--canvas);
+    border-left: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+  }
 
-	.settings-content {
-		display: flex;
-		flex-direction: column;
-		gap: 16px;
-	}
+  .panel-header {
+    height: 44px;
+    display: flex;
+    align-items: center;
+    padding: 0 16px;
+    font-size: 13px;
+    font-weight: 600;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
 
-	h2 {
-		font-size: 14px;
-		font-weight: 600;
-		color: #333;
-		text-transform: uppercase;
-		letter-spacing: 0.5px;
-		margin-top: 8px;
-	}
+  .section {
+    padding: 12px 0;
+    border-bottom: 1px solid var(--border);
+  }
 
-	.setting-group {
-		display: flex;
-		flex-direction: column;
-		gap: 6px;
-	}
+  .section-label {
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--muted);
+    padding: 0 16px 6px;
+  }
 
-	.setting-item {
-		display: flex;
-		align-items: center;
-		gap: 8px;
-		cursor: pointer;
-		font-size: 13px;
-		font-weight: 500;
-		color: #333;
-	}
+  .row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 7px 16px;
+    cursor: default;
+  }
 
-	.setting-item input {
-		cursor: pointer;
-	}
+  .row.disabled { opacity: 0.5; pointer-events: none; }
 
-	.setting-label {
-		display: flex;
-		flex-direction: column;
-		gap: 8px;
-		font-size: 13px;
-		font-weight: 500;
-		color: #333;
-	}
+  .folder-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 7px 16px;
+    flex-direction: column;
+  }
 
-	.setting-desc {
-		font-size: 11px;
-		color: #999;
-		margin: 0;
-		margin-left: 24px;
-	}
+  .row-text {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    min-width: 0;
+  }
 
-	.divider {
-		height: 1px;
-		background: #e0e0e0;
-		margin: 8px 0;
-	}
+  .row-title {
+    font-size: 13px;
+  }
 
-	.folder-selector {
-		display: flex;
-		gap: 8px;
-		margin-top: 8px;
-	}
+  .row-sub {
+    font-size: 11px;
+    color: var(--muted);
+  }
 
-	.folder-selector input {
-		flex: 1;
-		padding: 6px 8px;
-		border: 1px solid #ddd;
-		border-radius: 4px;
-		font-size: 12px;
-		background: #f5f5f5;
-	}
+  /* Toggle switch */
+  .switch {
+    position: relative;
+    width: 32px;
+    height: 18px;
+    border-radius: 9px;
+    background: var(--track);
+    border: none;
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: background 0.15s;
+    padding: 0;
+  }
 
-	.select-folder-btn {
-		padding: 6px 12px;
-		background: #667eea;
-		color: white;
-		border: none;
-		border-radius: 4px;
-		font-size: 12px;
-		font-weight: 500;
-		cursor: pointer;
-		transition: background 0.2s;
-		white-space: nowrap;
-	}
+  .switch::after {
+    content: '';
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: var(--knob);
+    box-shadow: 0 1px 3px rgba(0,0,0,.25);
+    transition: transform 0.15s;
+  }
 
-	.select-folder-btn:hover {
-		background: #5568d3;
-	}
+  .switch.on {
+    background: var(--accent);
+  }
 
-	.concurrent-control {
-		display: flex;
-		align-items: center;
-		gap: 8px;
-		margin-top: 8px;
-	}
+  .switch.on::after {
+    transform: translateX(14px);
+  }
 
-	.ctrl-btn {
-		width: 28px;
-		height: 28px;
-		border: 1px solid #ddd;
-		background: white;
-		border-radius: 4px;
-		cursor: pointer;
-		font-size: 16px;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		transition: all 0.2s;
-	}
+  .switch:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
 
-	.ctrl-btn:hover {
-		background: #f5f5f5;
-		border-color: #999;
-	}
+  /* Quality segmented control */
+  .quality-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 4px 16px 4px;
+  }
 
-	.concurrent-value {
-		min-width: 30px;
-		text-align: center;
-		font-weight: 600;
-		color: #667eea;
-	}
+  .segmented {
+    display: flex;
+    border: 1px solid var(--border2);
+    border-radius: 6px;
+    overflow: hidden;
+  }
+
+  .seg-btn {
+    padding: 3px 10px;
+    background: none;
+    border: none;
+    border-right: 1px solid var(--border2);
+    font-size: 11px;
+    font-family: inherit;
+    color: var(--muted);
+    cursor: pointer;
+  }
+
+  .seg-btn:last-child { border-right: none; }
+  .seg-btn:hover:not(.active):not(:disabled) { background: var(--surface2); }
+  .seg-btn.active { background: var(--accent); color: #fff; }
+  .seg-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  /* Stepper */
+  .stepper {
+    display: flex;
+    align-items: center;
+    gap: 0;
+    border: 1px solid var(--border2);
+    border-radius: 6px;
+    overflow: hidden;
+    height: 26px;
+  }
+
+  .step-btn {
+    width: 26px;
+    height: 26px;
+    background: none;
+    border: none;
+    border-right: 1px solid var(--border2);
+    font-size: 14px;
+    cursor: pointer;
+    color: var(--text);
+    font-family: inherit;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .step-btn:last-child { border-right: none; border-left: 1px solid var(--border2); }
+  .step-btn:hover:not(:disabled) { background: var(--surface2); }
+  .step-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  .step-val {
+    width: 26px;
+    text-align: center;
+    font-size: 13px;
+    font-weight: 500;
+  }
+
+  /* Folder */
+  .folder-pick-btn {
+    width: 100%;
+    padding: 5px 10px;
+    background: var(--surface);
+    border: 1px solid var(--border2);
+    border-radius: 6px;
+    font-size: 12px;
+    font-family: inherit;
+    color: var(--text);
+    cursor: pointer;
+    text-align: left;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .folder-pick-btn:hover:not(:disabled) { background: var(--surface2); }
+  .folder-pick-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  .folder-warn {
+    font-size: 11px;
+    color: var(--err);
+    padding: 2px 16px 6px;
+  }
 </style>

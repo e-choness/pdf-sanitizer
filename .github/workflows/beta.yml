@@ -32,18 +32,25 @@ jobs:
         with:
           workspaces: src-tauri
 
-      - name: Install Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '24'
-
       - name: Install pnpm
         uses: pnpm/action-setup@v4
         with:
           version: '9'
 
-      - name: Install dependencies
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'pnpm'
+
+      - name: Install frontend dependencies
         run: pnpm install
+
+      - name: Check Svelte components
+        run: pnpm check
+
+      - name: Run frontend tests
+        run: pnpm test
 
       - name: Build frontend
         run: pnpm build

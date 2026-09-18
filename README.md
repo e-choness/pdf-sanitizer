@@ -1,142 +1,178 @@
 # PDF Sanitizer
 
-A modern desktop application for sanitizing PDF files and removing potentially malicious content. Built with Tauri, Rust, and Svelte for a fast, lightweight, and beautiful user experience.
+A desktop application for stripping potentially malicious content from PDF files. Built with Tauri v2, Rust, and Svelte 5. Runs entirely offline — no data leaves your machine.
 
 ## Features
 
-- **Drag & Drop UI** - Simple file management with drag-and-drop support or file selection
-- **Batch Processing** - Process multiple files concurrently (configurable 1-8 concurrent files)
-- **Customizable Sanitization Options**:
-  - Remove metadata (default ON)
-  - Remove scripts/JavaScript (default ON)
-  - Remove embedded files (default ON)
-  - Strip external links/URLs (default OFF)
-  - Font subsetting (default OFF)
-  - Image compression (default OFF)
-- **File Management**:
-  - Per-file progress tracking with visual progress bar
-  - Stop individual files during processing
-  - Automatic original PDF backup to configurable folder
-  - Sanitized PDF replaces original location
-- **Settings**:
-  - Choose backup folder for original PDFs
-  - Configure concurrent processing threads
-  - All settings persisted locally
+- **Drag & drop** or file-picker to add PDFs
+- **Batch processing** with configurable concurrency (1–8 files at once)
+- **Per-file cancellation** — stop individual files mid-processing
+- **Original backup** — originals are moved to a folder you choose; sanitized files replace them in-place
+- **Sanitization options** (all toggleable):
+  - Remove metadata (author, dates, software info)
+  - Remove JavaScript and PDF actions
+  - Remove embedded files and attachments
+  - Strip external links
+  - Font subsetting (keep only used glyphs)
+  - Image recompression (Low / Medium / High JPEG quality)
+- **Settings persistence** — saved to your OS config directory automatically
 
-## Building Windows Executable with Docker
+## How to Use
 
-### Prerequisites
+1. Launch `pdf-sanitizer.exe`
+2. Drag PDF files onto the window, or click **Add files**
+3. In the **Settings** panel, choose a **Backup folder** (required before processing)
+4. Toggle sanitization options as needed
+5. Click **Sanitize** — progress is shown per file
+6. When done, sanitized PDFs are at the original paths; originals are in the backup folder
 
-- Docker installed (Linux containers mode)
+To stop a running batch, click **Stop all**. Individual files can be cancelled with the stop button on each row. Failed files can be retried.
 
-### Cross-compile Windows `.exe` from Linux
+## Download
+
+Pre-built Windows binaries are available on the [Releases](../../releases) page.
+
+## Development
+
+### Local setup
+
+**Prerequisites:**
+- [Rust](https://rustup.rs/) (stable)
+- [Node.js](https://nodejs.org/) 24+
+- [pnpm](https://pnpm.io/) 9+
+- Windows: [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) with C++ workload
 
 ```bash
-# Clone and enter the repository
-git clone https://github.com/e-choness/pdf-sanitizer.git
-cd PDFSanitizer
+# Install frontend dependencies
+pnpm install
 
-# Build the Docker image (compiles Windows .exe via cargo-xwin)
+# Start dev server + Tauri window
+pnpm tauri dev
+```
+
+### Docker setup
+
+**Prerequisites:** Docker with Linux containers.
+
+```bash
+# Run tests / checks inside Docker (no local Rust/Node needed)
+docker compose run --rm pdf-sanitizer pnpm test
+docker compose run --rm pdf-sanitizer pnpm check
+docker compose run --rm pdf-sanitizer sh -c "cd src-tauri && cargo test -p pdfsan-core"
+```
+
+### Run tests
+
+```bash
+# Frontend (Vitest)
+pnpm test
+
+# Svelte type + a11y check
+pnpm check
+
+# Rust core library
+cd src-tauri && cargo test -p pdfsan-core
+
+# Rust lint
+cd src-tauri && cargo clippy --workspace -- -D warnings
+```
+
+### Build release binary
+
+**Local** (Windows, requires MSVC toolchain):
+```bash
+cd src-tauri && cargo build --release
+# Output: src-tauri/target/release/pdf-sanitizer.exe
+```
+
+**Docker** (cross-compiles a Windows `.exe` from any OS):
+```bash
+# Build the image — this compiles the .exe inside the container
 docker build -t pdf-sanitizer-builder .
 
-# Extract the .exe
+# Extract the .exe to the current directory
 docker create --name extract pdf-sanitizer-builder
 docker cp extract:/pdf-sanitizer.exe ./pdf-sanitizer.exe
 docker rm extract
 ```
 
-The resulting `pdf-sanitizer.exe` can be run on Windows without any installation.
+The Docker build uses [`cargo-xwin`](https://github.com/rust-cross/cargo-xwin) to cross-compile for `x86_64-pc-windows-msvc` without a Windows host.
+
+## CI / CD
+
+Three GitHub Actions workflows live in `.github/workflows/`:
+
+| Workflow | Trigger | What it does |
+|---|---|---|
+| `test.yml` | Push/PR to `main` or `develop` | Frontend tests, svelte-check, Rust fmt/clippy/tests |
+| `release.yml` | Push a `v*` tag (or manual) | Builds Windows `.exe`, creates a GitHub Release |
+| `beta.yml` | Manual (`workflow_dispatch`) | Builds Windows `.exe`, creates a pre-release with a custom version tag |
+
+### Publishing a release
+
+```bash
+# Tag and push — release.yml fires automatically
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+The workflow cross-compiles a Windows `.exe` from Linux using [`cargo-xwin`](https://github.com/rust-cross/cargo-xwin). No Windows runner is needed.
+
+### Publishing a beta
+
+Go to **Actions → Build Beta Release → Run workflow** and enter a version string like `v1.1.0-beta.1`. The binary is published as a pre-release.
 
 ## Project Structure
 
 ```
 .
-├── src/                          # Frontend (Svelte)
-│   ├── App.svelte                # Main app component
-│   ├── main.js                   # Entry point
+├── src/                        # Frontend (Svelte 5)
+│   ├── App.svelte              # Root component, Tauri event wiring
+│   ├── App.css                 # CSS design tokens (light/dark themes)
+│   ├── main.js                 # Entry point
+│   ├── lib/
+│   │   ├── store.js            # Svelte stores + helper functions
+│   │   └── store.test.js       # Vitest unit tests
 │   └── components/
-│       ├── FileList.svelte        # File management UI
-│       ├── FileRow.svelte         # Individual file row
-│       └── Settings.svelte        # Settings panel
-├── src-tauri/                     # Backend (Rust)
+│       ├── FileList.svelte     # File list, toolbar, footer
+│       ├── FileRow.svelte      # Per-file row with status pill + progress
+│       └── Settings.svelte     # Settings panel with toggles + stepper
+├── src-tauri/                  # Backend (Rust / Tauri v2)
 │   ├── src/
-│   │   ├── main.rs               # Tauri commands & app setup
-│   │   ├── pdf_sanitizer.rs      # PDF processing logic
-│   │   └── settings.rs           # Settings persistence
-│   ├── Cargo.toml                # Rust dependencies
-│   └── tauri.conf.json           # Tauri configuration
-├── index.html                     # HTML template
-├── package.json                   # Frontend dependencies
-├── vite.config.js                # Vite configuration
-├── Dockerfile                     # Docker build configuration
-└── docker-compose.yml            # Docker compose setup
+│   │   ├── main.rs             # Tauri commands, AppState
+│   │   ├── pipeline.rs         # Batch runner, concurrency, cancellation
+│   │   └── settings.rs         # Settings load/save (OS config dir)
+│   ├── crates/
+│   │   └── pdfsan-core/        # Pure Rust sanitization library (no Tauri dep)
+│   │       └── src/lib.rs      # SanitizationSettings, sanitize(), 9 unit tests
+│   ├── capabilities/
+│   │   └── default.json        # Tauri v2 capability grants
+│   └── tauri.conf.json         # App metadata, window config
+├── .github/workflows/          # CI/CD pipelines
+├── index.html                  # HTML entry point
+├── vite.config.js              # Vite + Vitest config
+├── package.json                # Frontend deps (Svelte 5, Vite 8, Vitest 5)
+└── pnpm-workspace.yaml         # pnpm workspace
 ```
 
-## Development
+## Stack
 
-### Local Setup (without Docker)
-
-```bash
-# Install Rust (if not already installed)
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-
-# Install Node.js 24+ and pnpm
-# https://nodejs.org/
-npm install -g pnpm
-
-# Install dependencies
-pnpm install
-
-# Run in development mode
-pnpm tauri dev
-```
-
-## How It Works
-
-1. **Drop or select PDF files** into the drag-drop area
-2. **Configure sanitization options** in the settings panel
-3. **Click "Start Converting"** to begin processing
-4. **Monitor progress** for each file with the progress bar
-5. **Original PDFs** are moved to your configured backup folder
-6. **Sanitized PDFs** remain in the original file location
-
-## Security Considerations
-
-PDF processing involves parsing and rendering files which may contain exploits. The sanitizer:
-
-- Strips metadata, scripts, and embedded files
-- Re-renders PDFs to remove malicious content
-- Runs entirely locally - no network communication
-- Files are processed with configurable concurrency limits
-
-For maximum security with untrusted PDFs, consider:
-
-- Running on an isolated machine
-- Processing in a sandboxed environment
-- Regular security audits of the sanitization logic
-
-## Dependencies
-
-### Frontend
-
-- Svelte 4.0
-- Tauri API (@tauri-apps/api 2.0)
-- Vite 5.4
-- @tauri-apps/plugin-dialog (native file picker)
-
-### Backend
-
-- Tauri 2.x
-- Rust 2021 edition
-- Tokio (async runtime)
-- Serde (serialization)
-- tauri-plugin-dialog (file/folder dialogs)
+| Layer | Technology |
+|---|---|
+| UI framework | Svelte 5 |
+| Build tool | Vite 8 |
+| Desktop shell | Tauri v2 |
+| Language | Rust 2021 |
+| Async runtime | Tokio |
+| Frontend tests | Vitest 5 |
+| Package manager | pnpm 9 |
+| Cross-compilation | cargo-xwin |
 
 ## License
 
-See LICENSE file for details.
+See [LICENSE](LICENSE) for details.
 
 ## Credits
 
-Original CLI implementation by Lucas Andrade Cioffi
+Original CLI implementation by Lucas Andrade Cioffi  
 Modern desktop UI by Beili (Echo) Yin

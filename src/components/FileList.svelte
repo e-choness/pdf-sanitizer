@@ -1,266 +1,349 @@
 <script>
-	import FileRow from './FileRow.svelte';
-	import { createEventDispatcher } from 'svelte';
+  import { files, settings, batchRunning, headerSummary, clearFinished, toggleSelectAll, isActive } from '../lib/store.js';
+  import FileRow from './FileRow.svelte';
 
-	export let files = [];
-	export let dragActive = false;
-	export let handleDragEnter = () => {};
-	export let handleDragLeave = () => {};
-	export let handleDragOver = () => {};
-	export let handleDrop = () => {};
-	export let addFiles = () => {};
+  export let addFiles;
+  export let startProcessing;
+  export let cancelAll;
+  export let cancelFile;
+  export let selectFolder;
 
-	const dispatch = createEventDispatcher();
+  $: pendingSelected = $files.filter(f => f.selected && f.status === 'pending').length;
+  $: hasFinished = $files.some(f => ['done', 'error', 'cancelled'].includes(f.status));
+  $: failedCount = $files.filter(f => f.status === 'error').length;
+  $: anyActive = $files.some(f => isActive(f.status));
+  $: allSelected = $files.length > 0 && $files.every(f => f.selected);
+  $: someSelected = $files.some(f => f.selected) && !allSelected;
 
-	let allSelected = true;
+  function handleSelectAll(e) {
+    files.set(toggleSelectAll($files, e.target.checked));
+  }
 
-	function toggleSelectAll() {
-		allSelected = !allSelected;
-		files = files.map(f => ({ ...f, selected: allSelected }));
-	}
+  function removeFile(id) {
+    files.update(fs => fs.filter(f => f.id !== id));
+  }
 
-	function removeAllFiles() {
-		files = files.filter(f => f.status !== 'pending' && f.status !== 'done');
-	}
+  function retryFile(id) {
+    files.update(fs => fs.map(f =>
+      f.id === id
+        ? { ...f, status: 'pending', error: null, report: null, outputSize: null, pct: 0, pages: null }
+        : f
+    ));
+  }
 
-	function stopAllFiles() {
-		files = files.map(f => f.status === 'processing' ? { ...f, status: 'stopped' } : f);
-	}
+  function retryFailed() {
+    files.update(fs => fs.map(f =>
+      f.status === 'error'
+        ? { ...f, status: 'pending', error: null, report: null, outputSize: null, pct: 0, pages: null }
+        : f
+    ));
+  }
 
-	function handleStartProcessing() {
-		const selectedPending = files.filter(f => f.selected && f.status === 'pending');
-		if (selectedPending.length === 0) return;
-		dispatch('startProcessing');
-	}
-
-	function handleFileUpdate(e) {
-		const updated = e.detail;
-		files = files.map(f => f.id === updated.id ? { ...f, ...updated } : f);
-		dispatch('update', updated);
-	}
-
-	function handleRemoveFile(e) {
-		const fileId = e.detail;
-		files = files.filter(f => f.id !== fileId);
-	}
-
-	function handleSelectFolderClick() {
-		dispatch('selectFolder');
-	}
+  function doClearFinished() {
+    files.update(clearFinished);
+  }
 </script>
 
-<div class="file-list-container">
-	<div
-		class="drag-drop-zone"
-		class:active={dragActive}
-		on:dragenter={handleDragEnter}
-		on:dragleave={handleDragLeave}
-		on:dragover={handleDragOver}
-		on:drop={handleDrop}
-	>
-		<div class="zone-header">
-			<div class="left-controls">
-				<label class="checkbox-label">
-					<input
-						type="checkbox"
-						bind:checked={allSelected}
-						on:change={toggleSelectAll}
-					/>
-					<span>Select All</span>
-				</label>
-			</div>
-			<div class="right-controls">
-				<button class="icon-btn remove-btn" title="Remove all" on:click={removeAllFiles}>
-					✕
-				</button>
-				<button class="icon-btn stop-btn" title="Stop all" on:click={stopAllFiles}>
-					■
-				</button>
-			</div>
-		</div>
+<div class="panel">
+  <!-- Header -->
+  <header class="header">
+    <span class="app-title">PDF Sanitizer</span>
+    {#if $headerSummary}
+      <span class="summary">{$headerSummary}</span>
+    {/if}
+  </header>
 
-		{#if files.length === 0}
-			<div class="empty-state">
-				<div class="empty-icon">📄</div>
-				<p>Drag and drop PDF files here</p>
-				<p class="or">or</p>
-				<button class="select-btn" on:click={addFiles}>Add Files</button>
-			</div>
-		{:else}
-			<div class="file-rows">
-				{#each files as file (file.id)}
-					<FileRow
-						{file}
-						on:update={handleFileUpdate}
-						on:remove={handleRemoveFile}
-					/>
-				{/each}
-			</div>
-		{/if}
-	</div>
+  <!-- Toolbar -->
+  {#if $files.length > 0}
+    <div class="toolbar">
+      <label class="select-all">
+        <input
+          type="checkbox"
+          checked={allSelected}
+          indeterminate={someSelected}
+          on:change={handleSelectAll}
+        />
+        <span class="count">{$files.length} {$files.length === 1 ? 'file' : 'files'}</span>
+      </label>
 
-	<div class="action-bar">
-		<button class="convert-btn" on:click={handleStartProcessing} disabled={files.length === 0}>
-			Start Converting
-		</button>
-	</div>
+      <div class="toolbar-actions">
+        {#if hasFinished && !$batchRunning}
+          <button class="btn-ghost" on:click={doClearFinished}>Clear finished</button>
+        {/if}
+        {#if failedCount > 0 && !$batchRunning}
+          <button class="btn-ghost" on:click={retryFailed}>
+            Retry {failedCount} failed
+          </button>
+        {/if}
+        {#if anyActive}
+          <button class="btn-ghost danger" on:click={cancelAll}>Stop all</button>
+        {/if}
+        <button class="btn-ghost" on:click={addFiles}>Add files…</button>
+      </div>
+    </div>
+  {/if}
+
+  <!-- List body -->
+  <div class="list-body">
+    {#if $files.length === 0}
+      <div class="empty">
+        <div class="empty-icon">
+          <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+            <polyline points="14 2 14 8 20 8"/>
+          </svg>
+        </div>
+        <div class="empty-title">No PDFs added</div>
+        <div class="empty-sub">Drop files here or click Add files to get started</div>
+        <button class="btn-primary" on:click={addFiles}>Add files…</button>
+      </div>
+    {:else}
+      {#each $files as file (file.id)}
+        <FileRow
+          {file}
+          {cancelFile}
+          on:remove={e => removeFile(e.detail)}
+          on:retry={e => retryFile(e.detail)}
+          on:toggle={e => files.update(fs => fs.map(f => f.id === e.detail ? { ...f, selected: !f.selected } : f))}
+        />
+      {/each}
+      <div class="drop-hint">Drop more PDFs here</div>
+    {/if}
+  </div>
+
+  <!-- Footer -->
+  <footer class="footer">
+    <button class="folder-btn" on:click={selectFolder} title={$settings.outputFolder || 'Choose backup folder'}>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+      </svg>
+      <span class="folder-label">
+        {#if $settings.outputFolder}
+          {$settings.outputFolder.split(/[\\/]/).pop() || $settings.outputFolder}
+        {:else}
+          <span class="folder-empty">Choose backup folder</span>
+        {/if}
+      </span>
+    </button>
+
+    <div class="footer-right">
+      {#if pendingSelected > 0}
+        <span class="selected-count">{pendingSelected} selected</span>
+      {/if}
+      <button
+        class="btn-primary"
+        disabled={pendingSelected === 0 || !$settings.outputFolder || $batchRunning}
+        on:click={startProcessing}
+      >
+        {#if $batchRunning}
+          Sanitizing…
+        {:else}
+          Sanitize {pendingSelected === 1 ? '1 file' : `${pendingSelected} files`}
+        {/if}
+      </button>
+    </div>
+  </footer>
 </div>
 
 <style>
-	.file-list-container {
-		flex: 1;
-		display: flex;
-		flex-direction: column;
-		padding: 20px;
-		gap: 20px;
-	}
+  .panel {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    overflow: hidden;
+  }
 
-	.drag-drop-zone {
-		flex: 1;
-		border: 2px dashed #ccc;
-		border-radius: 8px;
-		background: #fafafa;
-		transition: all 0.3s ease;
-		display: flex;
-		flex-direction: column;
-		overflow: hidden;
-	}
+  /* Header */
+  .header {
+    height: 44px;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 0 16px;
+    border-bottom: 1px solid var(--border);
+  }
 
-	.drag-drop-zone.active {
-		border-color: #667eea;
-		background: #f0f3ff;
-	}
+  .app-title {
+    font-size: 13px;
+    font-weight: 600;
+    flex-shrink: 0;
+  }
 
-	.zone-header {
-		display: flex;
-		justify-content: space-between;
-		align-items: center;
-		padding: 12px 16px;
-		border-bottom: 1px solid #e0e0e0;
-		background: white;
-	}
+  .summary {
+    font-size: 12px;
+    color: var(--muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
 
-	.left-controls,
-	.right-controls {
-		display: flex;
-		gap: 8px;
-		align-items: center;
-	}
+  /* Toolbar */
+  .toolbar {
+    height: 40px;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 16px;
+    border-bottom: 1px solid var(--border);
+  }
 
-	.checkbox-label {
-		display: flex;
-		align-items: center;
-		gap: 6px;
-		cursor: pointer;
-		font-size: 14px;
-		font-weight: 500;
-		color: #333;
-	}
+  .select-all {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+    user-select: none;
+  }
 
-	.checkbox-label input {
-		cursor: pointer;
-	}
+  .select-all input[type="checkbox"] {
+    width: 14px;
+    height: 14px;
+    cursor: pointer;
+    accent-color: var(--accent);
+    flex-shrink: 0;
+  }
 
-	.icon-btn {
-		width: 32px;
-		height: 32px;
-		border: 1px solid #ddd;
-		border-radius: 4px;
-		background: white;
-		cursor: pointer;
-		font-size: 16px;
-		transition: all 0.2s;
-	}
+  .count {
+    font-size: 12px;
+    color: var(--muted);
+    white-space: nowrap;
+  }
 
-	.icon-btn:hover {
-		background: #f5f5f5;
-		border-color: #999;
-	}
+  .toolbar-actions {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
 
-	.remove-btn:hover {
-		color: #d32f2f;
-		border-color: #d32f2f;
-	}
+  /* List body */
+  .list-body {
+    flex: 1;
+    overflow-y: auto;
+    min-height: 0;
+  }
 
-	.stop-btn:hover {
-		color: #ff9800;
-		border-color: #ff9800;
-	}
+  .empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    height: 100%;
+    padding: 32px;
+    text-align: center;
+  }
 
-	.empty-state {
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		justify-content: center;
-		flex: 1;
-		gap: 12px;
-		color: #999;
-	}
+  .empty-icon {
+    color: var(--border2);
+  }
 
-	.empty-icon {
-		font-size: 48px;
-		opacity: 0.5;
-	}
+  .empty-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--muted);
+  }
 
-	.empty-state p {
-		font-size: 14px;
-	}
+  .empty-sub {
+    font-size: 12px;
+    color: var(--muted);
+    max-width: 240px;
+  }
 
-	.empty-state p.or {
-		font-size: 12px;
-		margin-top: 8px;
-	}
+  .drop-hint {
+    padding: 12px 16px;
+    font-size: 11px;
+    color: var(--border2);
+    text-align: center;
+  }
 
-	.select-btn {
-		margin-top: 8px;
-		padding: 8px 16px;
-		background: #667eea;
-		color: white;
-		border: none;
-		border-radius: 4px;
-		cursor: pointer;
-		font-size: 14px;
-		font-weight: 500;
-	}
+  /* Footer */
+  .footer {
+    height: 56px;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 0 16px;
+    border-top: 1px solid var(--border);
+  }
 
-	.select-btn:hover {
-		background: #5568d3;
-	}
+  .folder-btn {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 5px 8px;
+    cursor: pointer;
+    color: var(--text);
+    font-size: 12px;
+    min-width: 0;
+    height: 30px;
+  }
 
-	.file-rows {
-		flex: 1;
-		overflow-y: auto;
-		padding: 8px 0;
-	}
+  .folder-btn:hover { background: var(--surface2); }
 
-	.action-bar {
-		display: flex;
-		gap: 12px;
-		padding: 16px;
-		background: white;
-		border-top: 1px solid #e0e0e0;
-		border-radius: 8px;
-	}
+  .folder-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+  }
 
-	.convert-btn {
-		flex: 1;
-		padding: 12px 24px;
-		background: #667eea;
-		color: white;
-		border: none;
-		border-radius: 4px;
-		cursor: pointer;
-		font-size: 16px;
-		font-weight: 600;
-		transition: background 0.2s;
-	}
+  .folder-empty { color: var(--muted); }
 
-	.convert-btn:hover:not(:disabled) {
-		background: #5568d3;
-	}
+  .footer-right {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+  }
 
-	.convert-btn:disabled {
-		background: #ccc;
-		cursor: not-allowed;
-	}
+  .selected-count {
+    font-size: 12px;
+    color: var(--muted);
+    white-space: nowrap;
+  }
+
+  /* Buttons */
+  .btn-primary {
+    height: 30px;
+    padding: 0 14px;
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    white-space: nowrap;
+    font-family: inherit;
+  }
+
+  .btn-primary:hover:not(:disabled) { background: var(--accent-h); }
+  .btn-primary:disabled { opacity: 0.45; cursor: not-allowed; }
+
+  .btn-ghost {
+    height: 26px;
+    padding: 0 9px;
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    font-size: 12px;
+    color: var(--text);
+    cursor: pointer;
+    font-family: inherit;
+    white-space: nowrap;
+  }
+
+  .btn-ghost:hover { background: var(--surface2); }
+  .btn-ghost.danger { color: var(--err); border-color: var(--errbg); }
+  .btn-ghost.danger:hover { background: var(--errbg); }
 </style>

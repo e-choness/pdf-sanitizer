@@ -1,225 +1,329 @@
 <script>
-	import { createEventDispatcher } from 'svelte';
+  import { createEventDispatcher } from 'svelte';
+  import { formatSize, isActive, isStoppable } from '../lib/store.js';
 
-	export let file;
+  export let file;
+  export let cancelFile;
 
-	const dispatch = createEventDispatcher();
+  const dispatch = createEventDispatcher();
 
-	function formatSize(bytes) {
-		if (!bytes) return '0 B';
-		const k = 1024;
-		const sizes = ['B', 'KB', 'MB', 'GB'];
-		const i = Math.floor(Math.log(bytes) / Math.log(k));
-		return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
-	}
+  function stageText(f) {
+    switch (f.status) {
+      case 'pending':    return f.folder;
+      case 'loading':    return 'Opening and parsing document';
+      case 'rewriting':  return `Rewriting objects · ${f.pct}%`;
+      case 'optimizing': return 'Optimizing';
+      case 'saving':     return 'Writing sanitized copy';
+      case 'verifying':  return f.pages ? `Checking all ${f.pages} pages` : 'Verifying result';
+      case 'replacing':  return 'Finalizing';
+      case 'done':       return reportSummary(f.report);
+      case 'error':      return f.error ?? 'Failed';
+      case 'cancelled':  return 'Stopped';
+      default:           return '';
+    }
+  }
 
-	function toggleSelect() {
-		dispatch('update', { ...file, selected: !file.selected });
-	}
+  function reportSummary(report) {
+    if (!report) return 'Rewritten and verified';
+    const parts = [];
+    if (report.removed_metadata) parts.push('Removed metadata');
+    if (report.removed_javascript > 0) {
+      parts.push(`${report.removed_javascript} script${report.removed_javascript > 1 ? 's' : ''}`);
+    }
+    if (report.removed_actions > 0) {
+      parts.push(`${report.removed_actions} action${report.removed_actions > 1 ? 's' : ''}`);
+    }
+    if (report.removed_embedded_files > 0) {
+      parts.push(`${report.removed_embedded_files} attachment${report.removed_embedded_files > 1 ? 's' : ''}`);
+    }
+    if (report.removed_links > 0) {
+      parts.push(`${report.removed_links} link${report.removed_links > 1 ? 's' : ''}`);
+    }
+    if (report.images_recompressed > 0) {
+      parts.push(`${report.images_recompressed} image${report.images_recompressed > 1 ? 's' : ''} compressed`);
+    }
+    if (parts.length === 0) return 'Nothing to remove · rewritten and verified';
+    return parts.join(' · ');
+  }
 
-	function handleStop() {
-		dispatch('update', { ...file, status: 'stopped' });
-	}
+  function pillClass(status) {
+    if (status === 'done') return 'pill ok';
+    if (status === 'error') return 'pill err';
+    if (status === 'cancelled') return 'pill stopped';
+    if (status === 'pending') return 'pill queued';
+    return 'pill proc';
+  }
 
-	function handleRemove() {
-		dispatch('remove', file.id);
-	}
+  function pillLabel(status) {
+    if (status === 'done') return 'Sanitized';
+    if (status === 'error') return 'Failed';
+    if (status === 'cancelled') return 'Stopped';
+    if (status === 'pending') return 'Queued';
+    if (status === 'verifying') return 'Verifying';
+    return 'Sanitizing';
+  }
+
+  function handleAction() {
+    if (isStoppable(file.status)) {
+      cancelFile(file.id);
+    } else if (file.status === 'error') {
+      dispatch('retry', file.id);
+    } else if (!isActive(file.status)) {
+      dispatch('remove', file.id);
+    }
+  }
+
+  function actionTitle(status) {
+    if (isStoppable(status)) return 'Stop';
+    if (status === 'error') return 'Retry';
+    if (!isActive(status)) return 'Remove';
+    return '';
+  }
+
+  $: showAction = isStoppable(file.status) || file.status === 'error' || !isActive(file.status);
+  $: active = isActive(file.status);
+  $: stoppable = isStoppable(file.status);
+  $: sub = stageText(file);
+
+  $: outputBigger = file.outputSize != null && file.size > 0 && file.outputSize > file.size;
 </script>
 
-<div class="file-row" class:processing={file.status === 'processing'}>
-	<div class="progress-bar" class:active={file.status === 'processing'}>
-		<div class="progress-fill" style="width: {file.progress}%"></div>
-	</div>
+<div class="row" class:active>
+  <!-- Col 1: Checkbox -->
+  <label class="check-wrap">
+    <input
+      type="checkbox"
+      checked={file.selected}
+      disabled={active}
+      on:change={() => dispatch('toggle', file.id)}
+    />
+  </label>
 
-	<div class="row-content">
-		<div class="left-section">
-			<label class="checkbox-label">
-				<input
-					type="checkbox"
-					checked={file.selected}
-					on:change={toggleSelect}
-					disabled={file.status === 'processing'}
-				/>
-			</label>
-			<div class="file-icon">📄</div>
-			<div class="file-info">
-				<div class="file-name">{file.name}</div>
-				{#if file.status === 'error'}
-					<div class="file-error">{file.error}</div>
-				{/if}
-			</div>
-		</div>
+  <!-- Col 2: Name + subtext -->
+  <div class="info">
+    <span class="name" title={file.path}>{file.name}</span>
+    <span class="sub" class:err={file.status === 'error'} title={sub}>{sub}</span>
+  </div>
 
-		<div class="middle-section">
-			<div class="size-info">
-				<span>{formatSize(file.size)}</span>
-				{#if file.outputSize !== null}
-					<span class="arrow">→</span>
-					<span>{formatSize(file.outputSize)}</span>
-				{/if}
-			</div>
-		</div>
+  <!-- Col 3: Sizes -->
+  <div class="sizes">
+    {#if file.status === 'done' && file.outputSize != null}
+      <span class="size-in">{formatSize(file.size)}</span>
+      <span class="arrow">→</span>
+      <span class="size-out" class:bigger={outputBigger}>{formatSize(file.outputSize)}</span>
+    {:else}
+      <span class="size-in">{formatSize(file.size)}</span>
+    {/if}
+  </div>
 
-		<div class="right-section">
-			{#if file.status === 'processing'}
-				<button class="action-btn stop-btn" on:click={handleStop} title="Stop processing">
-					■
-				</button>
-			{:else}
-				<button class="action-btn remove-btn" on:click={handleRemove} title="Remove file">
-					✕
-				</button>
-			{/if}
-		</div>
-	</div>
+  <!-- Col 4: Status pill -->
+  <div class="pill-wrap">
+    <span class={pillClass(file.status)}>
+      {#if file.status === 'done'}
+        <span class="dot"></span>
+      {:else if active}
+        <span class="spinner"></span>
+      {/if}
+      {pillLabel(file.status)}
+    </span>
+  </div>
+
+  <!-- Col 5: Action button -->
+  <div class="action-wrap">
+    {#if showAction}
+      <button
+        class="action-btn"
+        class:stop={stoppable}
+        class:retry={file.status === 'error'}
+        title={actionTitle(file.status)}
+        on:click={handleAction}
+      >
+        {#if stoppable}
+          ■
+        {:else if file.status === 'error'}
+          ↺
+        {:else}
+          ✕
+        {/if}
+      </button>
+    {/if}
+  </div>
+
+  <!-- Progress bar -->
+  {#if active}
+    <div class="progress-track">
+      <div class="progress-fill" style="width: {file.pct}%"></div>
+    </div>
+  {/if}
 </div>
 
 <style>
-	.file-row {
-		position: relative;
-		margin: 0 8px 4px;
-		border-radius: 6px;
-		background: white;
-		border: 1px solid #e0e0e0;
-		overflow: hidden;
-	}
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
 
-	.progress-bar {
-		position: absolute;
-		top: 0;
-		left: 0;
-		right: 0;
-		height: 100%;
-		opacity: 0;
-		background: rgba(102, 126, 234, 0.1);
-		transition: opacity 0.2s;
-		pointer-events: none;
-	}
+  .row {
+    position: relative;
+    display: grid;
+    grid-template-columns: 14px minmax(0, 1fr) 150px 120px 28px;
+    grid-template-rows: 1fr;
+    column-gap: 14px;
+    align-items: center;
+    height: 52px;
+    padding: 0 16px;
+    border-bottom: 1px solid var(--border);
+  }
 
-	.progress-bar.active {
-		opacity: 1;
-	}
+  .row:hover { background: var(--surface2); }
 
-	.progress-fill {
-		height: 100%;
-		background: linear-gradient(90deg, #667eea, #764ba2);
-		width: 0%;
-		transition: width 0.3s ease;
-		opacity: 0.3;
-	}
+  @media (max-width: 900px) {
+    .row {
+      grid-template-columns: 14px minmax(0, 1fr) 128px 92px 24px;
+      column-gap: 10px;
+      height: 46px;
+    }
+  }
 
-	.row-content {
-		display: flex;
-		align-items: center;
-		gap: 12px;
-		padding: 12px 16px;
-		position: relative;
-		z-index: 1;
-	}
+  /* Checkbox */
+  .check-wrap {
+    display: flex;
+    align-items: center;
+    cursor: pointer;
+  }
 
-	.left-section {
-		display: flex;
-		align-items: center;
-		gap: 12px;
-		flex: 1;
-		min-width: 0;
-	}
+  .check-wrap input[type="checkbox"] {
+    width: 14px;
+    height: 14px;
+    cursor: pointer;
+    accent-color: var(--accent);
+  }
 
-	.checkbox-label {
-		display: flex;
-		cursor: pointer;
-	}
+  .check-wrap input:disabled { cursor: default; opacity: 0.4; }
 
-	.checkbox-label input {
-		cursor: pointer;
-	}
+  /* Info */
+  .info {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    min-width: 0;
+  }
 
-	.checkbox-label input:disabled {
-		cursor: not-allowed;
-		opacity: 0.5;
-	}
+  .name {
+    font-size: 13px;
+    font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
 
-	.file-icon {
-		font-size: 20px;
-		flex-shrink: 0;
-	}
+  .sub {
+    font-size: 11px;
+    color: var(--muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
 
-	.file-info {
-		flex: 1;
-		min-width: 0;
-	}
+  .sub.err { color: var(--err); }
 
-	.file-name {
-		font-size: 14px;
-		font-weight: 500;
-		color: #333;
-		white-space: nowrap;
-		overflow: hidden;
-		text-overflow: ellipsis;
-	}
+  /* Sizes */
+  .sizes {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 12px;
+    justify-content: flex-end;
+    color: var(--muted);
+    white-space: nowrap;
+  }
 
-	.file-error {
-		font-size: 12px;
-		color: #d32f2f;
-		margin-top: 4px;
-	}
+  .size-in { color: var(--text); }
+  .size-out { color: var(--ok); }
+  .size-out.bigger { color: var(--err); }
+  .arrow { color: var(--muted); font-size: 10px; }
 
-	.middle-section {
-		display: flex;
-		align-items: center;
-		gap: 12px;
-	}
+  /* Pill */
+  .pill-wrap {
+    display: flex;
+    justify-content: flex-end;
+  }
 
-	.size-info {
-		display: flex;
-		align-items: center;
-		gap: 8px;
-		font-size: 12px;
-		color: #666;
-		white-space: nowrap;
-		min-width: fit-content;
-	}
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 11px;
+    font-weight: 500;
+    padding: 3px 8px;
+    border-radius: 100px;
+    white-space: nowrap;
+  }
 
-	.size-info .arrow {
-		color: #ccc;
-	}
+  .pill.ok      { background: var(--okbg);   color: var(--ok);   }
+  .pill.err     { background: var(--errbg);  color: var(--err);  }
+  .pill.proc    { background: var(--procbg); color: var(--accent); }
+  .pill.stopped { background: var(--surface2); color: var(--muted); }
+  .pill.queued  { background: none; color: var(--muted); padding-inline: 4px; }
 
-	.right-section {
-		display: flex;
-		gap: 8px;
-	}
+  .dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--ok);
+    flex-shrink: 0;
+  }
 
-	.action-btn {
-		width: 28px;
-		height: 28px;
-		border: 1px solid #ddd;
-		border-radius: 4px;
-		background: white;
-		cursor: pointer;
-		font-size: 14px;
-		transition: all 0.2s;
-		flex-shrink: 0;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-	}
+  .spinner {
+    width: 10px;
+    height: 10px;
+    border: 1.5px solid transparent;
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.75s linear infinite;
+    flex-shrink: 0;
+  }
 
-	.action-btn:hover {
-		background: #f5f5f5;
-		border-color: #999;
-	}
+  /* Action */
+  .action-wrap {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+  }
 
-	.remove-btn:hover {
-		color: #d32f2f;
-		border-color: #d32f2f;
-	}
+  .action-btn {
+    width: 22px;
+    height: 22px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 10px;
+    color: var(--muted);
+    padding: 0;
+    line-height: 1;
+  }
 
-	.stop-btn:hover {
-		color: #ff9800;
-		border-color: #ff9800;
-	}
+  .action-btn:hover { background: var(--surface2); color: var(--text); }
+  .action-btn.stop:hover { background: var(--errbg); color: var(--err); border-color: var(--errbg); }
+  .action-btn.retry { color: var(--accent); }
 
-	.file-row.processing {
-		background: #fafafa;
-	}
+  /* Progress */
+  .progress-track {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: var(--border);
+    grid-column: 1 / -1;
+  }
+
+  .progress-fill {
+    height: 100%;
+    background: var(--accent);
+    transition: width 0.2s ease;
+  }
 </style>
