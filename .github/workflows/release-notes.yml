@@ -1,0 +1,39 @@
+name: Update Release Notes
+
+# Rewrite the notes of an existing release from docs/changelog.md on the
+# selected branch. Use it to fill in or correct notes after a release was
+# published, without rebuilding.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to update (e.g. v1.0.1)'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Update release notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          node scripts/release.mjs notes "$TAG" > release-notes.md
+
+          # Append GitHub's generated PR list and compare link, as the
+          # release workflow does.
+          gh api "repos/${GITHUB_REPOSITORY}/releases/generate-notes" \
+            -f tag_name="$TAG" --jq .body > generated.md
+          { cat release-notes.md; echo; cat generated.md; } > body.md
+
+          gh release edit "$TAG" --title "PDF Sanitizer $TAG" --notes-file body.md
+          echo "Updated $TAG:" >> "$GITHUB_STEP_SUMMARY"
+          cat body.md >> "$GITHUB_STEP_SUMMARY"

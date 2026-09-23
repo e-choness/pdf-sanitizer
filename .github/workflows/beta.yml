@@ -85,24 +85,27 @@ jobs:
           name: pdf-sanitizer-beta-${{ matrix.arch }}
           path: src-tauri/target/${{ matrix.target }}/release/pdf-sanitizer.exe
 
+      # Pre-release notes are the changelog's [Unreleased] section.
+      - name: Write release notes
+        env:
+          BETA_VERSION: ${{ github.event.inputs.beta_version }}
+        run: |
+          {
+            echo "> [!WARNING]"
+            echo "> **Pre-release for testing.** Features may change before the stable release. Please [report issues](https://github.com/${GITHUB_REPOSITORY}/issues)."
+            echo
+            node scripts/release.mjs notes "$BETA_VERSION"
+          } > release-notes.md
+
       - name: Create Beta Release
         uses: softprops/action-gh-release@v2
         with:
+          name: PDF Sanitizer ${{ github.event.inputs.beta_version }}
+          body_path: release-notes.md
+          generate_release_notes: true
           files: src-tauri/target/${{ matrix.target }}/release/pdf-sanitizer.exe
           tag_name: ${{ github.event.inputs.beta_version }}
           draft: false
           prerelease: true
-          body: |
-            # Beta Release: ${{ github.event.inputs.beta_version }}
-
-            ⚠️ **This is a beta release** - Use for testing purposes only.
-
-            ## Download
-            - Windows: `pdf-sanitizer.exe`
-
-            ## Testing Notes
-            - Please report any issues on GitHub
-            - Features may change before stable release
-            - Not recommended for production use
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

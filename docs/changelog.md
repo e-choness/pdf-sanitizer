@@ -6,6 +6,14 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- GitHub release notes are generated from this changelog, followed by the
+  list of merged pull requests. `pnpm release:prepare <version>` moves the
+  unreleased entries under the new version and bumps the version everywhere.
+
+## [1.0.1] - 2026-09-23
+
 ### Fixed
 
 - PDFs that open without a password but are encrypted with AES (owner
@@ -38,5 +46,6 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Windows `.exe` built via GitHub Actions (cargo-xwin cross-compilation) and a
   Docker build environment.
 
-[Unreleased]: https://github.com/e-choness/pdf-sanitizer/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/e-choness/pdf-sanitizer/compare/v1.0.1...HEAD
+[1.0.1]: https://github.com/e-choness/pdf-sanitizer/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/e-choness/pdf-sanitizer/releases/tag/v1.0.0

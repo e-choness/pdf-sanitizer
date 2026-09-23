@@ -20,6 +20,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Fail fast if the tag was pushed without running `scripts/release.mjs prepare`.
+      - name: Check tag matches app version
+        if: startsWith(github.ref, 'refs/tags/')
+        run: node scripts/release.mjs check "$GITHUB_REF_NAME"
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -83,10 +88,19 @@ jobs:
           name: pdf-sanitizer-${{ matrix.arch }}
           path: src-tauri/target/${{ matrix.target }}/release/pdf-sanitizer.exe
 
+      - name: Extract release notes from changelog
+        if: startsWith(github.ref, 'refs/tags/')
+        run: node scripts/release.mjs notes "$GITHUB_REF_NAME" > release-notes.md
+
+      # Body = the version's changelog section, followed by GitHub's generated
+      # list of merged PRs and a "Full Changelog" compare link.
       - name: Create Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
+          name: PDF Sanitizer ${{ github.ref_name }}
+          body_path: release-notes.md
+          generate_release_notes: true
           files: src-tauri/target/${{ matrix.target }}/release/pdf-sanitizer.exe
           draft: false
           prerelease: false
