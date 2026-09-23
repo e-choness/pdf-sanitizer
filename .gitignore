@@ -48,3 +48,7 @@ reference/
 
 .openclaude
 # End of https://www.toptal.com/developers/gitignore/api/rust
+# VitePress
+docs/.vitepress/dist
+docs/.vitepress/cache
+.pnpm**

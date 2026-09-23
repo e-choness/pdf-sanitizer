@@ -1,177 +1,112 @@
-# PDF Sanitizer
+<div align="center">
 
-A desktop application for stripping potentially malicious content from PDF files. Built with Tauri v2, Rust, and Svelte 5. Runs entirely offline — no data leaves your machine.
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/public/banner-dark.svg">
+  <img alt="PDF Sanitizer — strip scripts, attachments, links and metadata from PDFs, fully offline" src="docs/public/banner-light.svg" width="100%">
+</picture>
 
-## Features
+<br>
 
-- **Drag & drop** or file-picker to add PDFs
-- **Batch processing** with configurable concurrency (1–8 files at once)
-- **Per-file cancellation** — stop individual files mid-processing
-- **Original backup** — originals are moved to a folder you choose; sanitized files replace them in-place
-- **Sanitization options** (all toggleable):
-  - Remove metadata (author, dates, software info)
-  - Remove JavaScript and PDF actions
-  - Remove embedded files and attachments
-  - Strip external links
-  - Font subsetting (keep only used glyphs)
-  - Image recompression (Low / Medium / High JPEG quality)
-- **Settings persistence** — saved to your OS config directory automatically
+[![Latest release](https://img.shields.io/github/v/release/e-choness/pdf-sanitizer?label=release&color=2563eb)](https://github.com/e-choness/pdf-sanitizer/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/e-choness/pdf-sanitizer/total?color=2563eb)](https://github.com/e-choness/pdf-sanitizer/releases)
+[![Tests](https://img.shields.io/github/actions/workflow/status/e-choness/pdf-sanitizer/test.yml?branch=main&label=tests)](https://github.com/e-choness/pdf-sanitizer/actions/workflows/test.yml)
+[![Docs](https://img.shields.io/github/actions/workflow/status/e-choness/pdf-sanitizer/docs.yml?branch=main&label=docs)](https://e-choness.github.io/pdf-sanitizer/)
+[![License: PolyForm Noncommercial](https://img.shields.io/badge/license-PolyForm%20NC%201.0.0-lightgrey)](LICENSE)
 
-## How to Use
+[![Platform: Windows](https://img.shields.io/badge/platform-Windows%20x64-0078D6?logo=windows&logoColor=white)](https://github.com/e-choness/pdf-sanitizer/releases/latest)
+[![Tauri 2](https://img.shields.io/badge/Tauri-2-24C8DB?logo=tauri&logoColor=white)](https://tauri.app)
+[![Rust](https://img.shields.io/badge/Rust-stable-B7410E?logo=rust&logoColor=white)](https://www.rust-lang.org)
+[![Svelte 5](https://img.shields.io/badge/Svelte-5-FF3E00?logo=svelte&logoColor=white)](https://svelte.dev)
+[![Last commit](https://img.shields.io/github/last-commit/e-choness/pdf-sanitizer)](https://github.com/e-choness/pdf-sanitizer/commits/main)
 
-1. Launch `pdf-sanitizer.exe`
-2. Drag PDF files onto the window, or click **Add files**
-3. In the **Settings** panel, choose a **Backup folder** (required before processing)
-4. Toggle sanitization options as needed
-5. Click **Sanitize** — progress is shown per file
-6. When done, sanitized PDFs are at the original paths; originals are in the backup folder
+**[Download](https://github.com/e-choness/pdf-sanitizer/releases/latest)** ·
+**[Documentation](https://e-choness.github.io/pdf-sanitizer/)** ·
+**[Changelog](https://e-choness.github.io/pdf-sanitizer/changelog)** ·
+**[Report a bug](https://github.com/e-choness/pdf-sanitizer/issues/new)**
 
-To stop a running batch, click **Stop all**. Individual files can be cancelled with the stop button on each row. Failed files can be retried.
+</div>
 
-## Download
+---
 
-Pre-built Windows binaries are available on the [Releases](../../releases) page.
+PDF files can carry JavaScript, auto-run actions, hidden attachments, tracking
+links and metadata about who made them and with what. **PDF Sanitizer** removes
+all of that and swaps each file for a clean copy, keeping the original in a
+backup folder. It is a single offline Windows app: no installer, no account and
+no network access.
 
-## Development
+## ✨ Features
 
-### Local setup
-
-**Prerequisites:**
-- [Rust](https://rustup.rs/) (stable)
-- [Node.js](https://nodejs.org/) 24+
-- [pnpm](https://pnpm.io/) 9+
-- Windows: [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) with C++ workload
-
-```bash
-# Install frontend dependencies
-pnpm install
-
-# Start dev server + Tauri window
-pnpm tauri dev
-```
-
-### Docker setup
-
-**Prerequisites:** Docker with Linux containers.
-
-```bash
-# Run tests / checks inside Docker (no local Rust/Node needed)
-docker compose run --rm pdf-sanitizer pnpm test
-docker compose run --rm pdf-sanitizer pnpm check
-docker compose run --rm pdf-sanitizer sh -c "cd src-tauri && cargo test -p pdfsan-core"
-```
-
-### Run tests
-
-```bash
-# Frontend (Vitest)
-pnpm test
-
-# Svelte type + a11y check
-pnpm check
-
-# Rust core library
-cd src-tauri && cargo test -p pdfsan-core
-
-# Rust lint
-cd src-tauri && cargo clippy --workspace -- -D warnings
-```
-
-### Build release binary
-
-**Local** (Windows, requires MSVC toolchain):
-```bash
-cd src-tauri && cargo build --release --features custom-protocol
-# Output: src-tauri/target/release/pdf-sanitizer.exe
-```
-
-**Docker** (cross-compiles a Windows `.exe` from any OS):
-```bash
-# Build the image — this compiles the .exe inside the container
-docker build -t pdf-sanitizer-builder .
-
-# Extract the .exe to the current directory
-docker create --name extract pdf-sanitizer-builder
-docker cp extract:/pdf-sanitizer.exe ./pdf-sanitizer.exe
-docker rm extract
-```
-
-The Docker build uses [`cargo-xwin`](https://github.com/rust-cross/cargo-xwin) to cross-compile for `x86_64-pc-windows-msvc` without a Windows host.
-
-## CI / CD
-
-Three GitHub Actions workflows live in `.github/workflows/`:
-
-| Workflow | Trigger | What it does |
-|---|---|---|
-| `test.yml` | Push/PR to `main` or `develop` | Frontend tests, svelte-check, Rust fmt/clippy/tests |
-| `release.yml` | Push a `v*` tag (or manual) | Builds Windows `.exe`, creates a GitHub Release |
-| `beta.yml` | Manual (`workflow_dispatch`) | Builds Windows `.exe`, creates a pre-release with a custom version tag |
-
-### Publishing a release
-
-```bash
-# Tag and push — release.yml fires automatically
-git tag v1.0.0
-git push origin v1.0.0
-```
-
-The workflow cross-compiles a Windows `.exe` from Linux using [`cargo-xwin`](https://github.com/rust-cross/cargo-xwin). No Windows runner is needed.
-
-### Publishing a beta
-
-Go to **Actions → Build Beta Release → Run workflow** and enter a version string like `v1.1.0-beta.1`. The binary is published as a pre-release.
-
-## Project Structure
-
-```
-.
-├── src/                        # Frontend (Svelte 5)
-│   ├── App.svelte              # Root component, Tauri event wiring
-│   ├── App.css                 # CSS design tokens (light/dark themes)
-│   ├── main.js                 # Entry point
-│   ├── lib/
-│   │   ├── store.js            # Svelte stores + helper functions
-│   │   └── store.test.js       # Vitest unit tests
-│   └── components/
-│       ├── FileList.svelte     # File list, toolbar, footer
-│       ├── FileRow.svelte      # Per-file row with status pill + progress
-│       └── Settings.svelte     # Settings panel with toggles + stepper
-├── src-tauri/                  # Backend (Rust / Tauri v2)
-│   ├── src/
-│   │   ├── main.rs             # Tauri commands, AppState
-│   │   ├── pipeline.rs         # Batch runner, concurrency, cancellation
-│   │   └── settings.rs         # Settings load/save (OS config dir)
-│   ├── crates/
-│   │   └── pdfsan-core/        # Pure Rust sanitization library (no Tauri dep)
-│   │       └── src/lib.rs      # SanitizationSettings, sanitize(), 9 unit tests
-│   ├── capabilities/
-│   │   └── default.json        # Tauri v2 capability grants
-│   └── tauri.conf.json         # App metadata, window config
-├── .github/workflows/          # CI/CD pipelines
-├── index.html                  # HTML entry point
-├── vite.config.js              # Vite + Vitest config
-├── package.json                # Frontend deps (Svelte 5, Vite 8, Vitest 5)
-└── pnpm-workspace.yaml         # pnpm workspace
-```
-
-## Stack
-
-| Layer | Technology |
+| | |
 |---|---|
-| UI framework | Svelte 5 |
-| Build tool | Vite 8 |
-| Desktop shell | Tauri v2 |
-| Language | Rust 2021 |
-| Async runtime | Tokio |
-| Frontend tests | Vitest 5 |
-| Package manager | pnpm 9 |
-| Cross-compilation | cargo-xwin |
+| 🛡️ **Removes active content** | JavaScript, `OpenAction`/`AA` triggers, launch, submit-form and media actions, XFA forms |
+| 📎 **Removes hidden payloads** | Embedded files and file-attachment annotations |
+| 🕵️ **Removes metadata** | Author, dates, producer software, XMP streams |
+| 🔗 **Strips outbound links** | URL and remote-file links (optional) |
+| ✅ **Verifies every result** | Re-parses the output and checks page count, content streams and leftover scripts before touching the original |
+| 🗂️ **Keeps originals** | Moves each original to a backup folder you choose; the clean file takes its place |
+| ⚡ **Batch processing** | Up to 8 files in parallel, with per-file progress, stop and retry |
+| 🪶 **Shrinks files** | Optional TrueType font subsetting and JPEG image recompression |
 
-## License
+See **[What gets removed](https://e-choness.github.io/pdf-sanitizer/guide/sanitization)**
+for the full list.
 
-Licensed under the [PolyForm Noncommercial License 1.0.0](LICENSE).
-Free for personal, research, educational and other noncommercial use;
-commercial use requires a separate license from the author.
+## 🚀 Quick start
 
-Copyright (c) 2026 Beili (Echo) Yin
+1. Download **`pdf-sanitizer.exe`** from the
+   [latest release](https://github.com/e-choness/pdf-sanitizer/releases/latest).
+   There's no installer; just run it.
+2. Drag PDFs onto the window, or click **Add files…**.
+3. Choose a **Backup folder** under *Settings → Output*.
+4. Click **Sanitize**.
+
+Cleaned PDFs are left at their original paths, and the originals are in the
+backup folder. → [User guide](https://e-choness.github.io/pdf-sanitizer/guide/getting-started)
+
+> [!NOTE]
+> The executable is not code-signed. If Windows SmartScreen warns you, choose
+> **More info → Run anyway**. The app needs the WebView2 runtime, which comes
+> with Windows 11 and up-to-date Windows 10.
+
+## 🛠️ Build from source
+
+```bash
+git clone https://github.com/e-choness/pdf-sanitizer.git
+cd pdf-sanitizer
+pnpm install
+pnpm tauri dev                                   # run with hot reload
+```
+
+Or cross-compile the Windows `.exe` from any OS with Docker:
+
+```bash
+docker build --target export --output . .
+```
+
+| Guide | |
+|---|---|
+| [Local setup](https://e-choness.github.io/pdf-sanitizer/development/setup) | Prerequisites, project layout, commands |
+| [Architecture](https://e-choness.github.io/pdf-sanitizer/development/architecture) | How the UI, Tauri shell and core library fit together |
+| [Testing](https://e-choness.github.io/pdf-sanitizer/development/testing) | Automated checks and the release checklist |
+| [Building](https://e-choness.github.io/pdf-sanitizer/development/building) | Docker and native builds, build profiles, caching |
+| [Releasing](https://e-choness.github.io/pdf-sanitizer/development/releasing) | Versioning, stable and beta releases, docs deployment |
+
+## 📈 Project activity
+
+<a href="https://github.com/e-choness/pdf-sanitizer/graphs/contributors">
+  <img alt="Contributors" src="https://contrib.rocks/image?repo=e-choness/pdf-sanitizer">
+</a>
+
+<a href="https://star-history.com/#e-choness/pdf-sanitizer&Date">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=e-choness/pdf-sanitizer&type=Date&theme=dark">
+    <img alt="Star history" src="https://api.star-history.com/svg?repos=e-choness/pdf-sanitizer&type=Date" width="600">
+  </picture>
+</a>
+
+## 📄 License
+
+Licensed under the [PolyForm Noncommercial License 1.0.0](LICENSE). It's free
+for personal, research, educational and other noncommercial use. Commercial
+use requires a separate license from the author.
+
+Copyright © 2026 Beili (Echo) Yin
