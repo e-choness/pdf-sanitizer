@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 320" width="1280" height="320" role="img" aria-label="PDF Sanitizer — strip scripts, attachments and metadata from PDFs, fully offline">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0b1220"/>
+      <stop offset="1" stop-color="#111c33"/>
+    </linearGradient>
+    <linearGradient id="mark" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#4f8cff"/>
+      <stop offset="1" stop-color="#1d4ed8"/>
+    </linearGradient>
+    <pattern id="dots" width="22" height="22" patternUnits="userSpaceOnUse">
+      <circle cx="2" cy="2" r="1.4" fill="#2563eb" fill-opacity=".22"/>
+    </pattern>
+  </defs>
+  <rect width="1280" height="320" rx="24" fill="url(#bg)"/>
+  <rect x="760" width="520" height="320" fill="url(#dots)"/>
+
+  <!-- logo mark -->
+  <g transform="translate(88 96) scale(2)">
+    <path d="M14 4h26l14 14v38a4 4 0 0 1-4 4H14a4 4 0 0 1-4-4V8a4 4 0 0 1 4-4z" fill="url(#mark)"/>
+    <path d="M40 4v10a4 4 0 0 0 4 4h10z" fill="#ffffff" fill-opacity=".35"/>
+    <path d="M32 22l12 4.5v8.5c0 8-5.2 13.6-12 16-6.8-2.4-12-8-12-16v-8.5z" fill="#ffffff"/>
+    <path d="M26.5 36.2l4 4 7.5-8" fill="none" stroke="#2563eb" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif">
+    <text x="240" y="150" font-size="60" font-weight="700" fill="#f1f5f9">PDF Sanitizer</text>
+    <text x="242" y="196" font-size="24" fill="#94a3b8">Strip scripts, attachments, links and metadata from PDFs.</text>
+    <text x="242" y="230" font-size="24" fill="#94a3b8">Offline desktop app — nothing leaves your machine.</text>
+  </g>
+
+  <!-- before / after documents -->
+  <g transform="translate(900 70)">
+    <rect width="120" height="160" rx="10" fill="#1e293b" stroke="#334155" stroke-width="2"/>
+    <rect x="18" y="26" width="84" height="8" rx="4" fill="#475569"/>
+    <rect x="18" y="46" width="64" height="8" rx="4" fill="#475569"/>
+    <rect x="18" y="66" width="76" height="8" rx="4" fill="#fca5a5"/>
+    <rect x="18" y="86" width="52" height="8" rx="4" fill="#475569"/>
+    <rect x="18" y="106" width="70" height="8" rx="4" fill="#fdba74"/>
+    <rect x="18" y="126" width="44" height="8" rx="4" fill="#fca5a5"/>
+    <text x="60" y="190" text-anchor="middle" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="16" fill="#94a3b8">before</text>
+  </g>
+  <path d="M1040 150h44m-12-12l12 12-12 12" fill="none" stroke="#4f8cff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+  <g transform="translate(1100 70)">
+    <rect width="120" height="160" rx="10" fill="#1e293b" stroke="#4f8cff" stroke-width="2"/>
+    <rect x="18" y="26" width="84" height="8" rx="4" fill="#3b5b9a"/>
+    <rect x="18" y="46" width="64" height="8" rx="4" fill="#3b5b9a"/>
+    <rect x="18" y="86" width="52" height="8" rx="4" fill="#3b5b9a"/>
+    <circle cx="96" cy="132" r="14" fill="#2563eb"/>
+    <path d="M89 132l5 5 9-9" fill="none" stroke="#ffffff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+    <text x="60" y="190" text-anchor="middle" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="16" fill="#94a3b8">after</text>
+  </g>
+</svg>

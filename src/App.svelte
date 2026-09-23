@@ -1,195 +1,282 @@
 <script>
-	import { onMount } from 'svelte';
-	import { invoke } from '@tauri-apps/api/core';
-	import { listen } from '@tauri-apps/api/event';
-	import FileList from './components/FileList.svelte';
-	import Settings from './components/Settings.svelte';
-	import './App.css';
+  import { onMount } from 'svelte';
+  import { get } from 'svelte/store';
+  import { invoke } from '@tauri-apps/api/core';
+  import { listen } from '@tauri-apps/api/event';
+  import { open } from '@tauri-apps/plugin-dialog';
+  import { files, settings, batchRunning, dragActive } from './lib/store.js';
+  import FileList from './components/FileList.svelte';
+  import Settings from './components/Settings.svelte';
 
-	let files = [];
-	let settings = {
-		removeMetadata: true,
-		removeScripts: true,
-		removeEmbeddedFiles: true,
-		compressImages: false,
-		highCompression: false,
-		stripExternalLinks: false,
-		fontSubsetting: false,
-		maxConcurrent: 4,
-		outputFolder: '',
-	};
-	let dragActive = false;
+  let toasts = [];
 
-	onMount(async () => {
-		try {
-			const saved = await invoke('load_settings');
-			settings = { ...settings, ...saved };
-		} catch (e) {
-			console.error('Failed to load settings:', e);
-		}
+  onMount(() => {
+    let disposed = false;
+    let unlisteners = [];
 
-		// Listen for file completion events
-		const unlistenComplete = await listen('file_complete', (event) => {
-			const { id, output_size } = event.payload;
-			files = files.map(f =>
-				f.id === id ? { ...f, status: 'done', progress: 100, outputSize: output_size } : f
-			);
-		});
+    invoke('load_settings')
+      .then(saved => settings.update(s => ({ ...s, ...saved })))
+      .catch(e => console.error('Failed to load settings:', e));
 
-		// Listen for file error events
-		const unlistenError = await listen('file_error', (event) => {
-			const { id, error } = event.payload;
-			files = files.map(f =>
-				f.id === id ? { ...f, status: 'error', error } : f
-			);
-		});
+    Promise.all([
+      listen('file_progress', ({ payload }) => {
+        files.update(fs => fs.map(f =>
+          f.id === payload.id
+            ? { ...f, status: payload.stage, pct: payload.pct, pages: payload.pages ?? f.pages }
+            : f
+        ));
+      }),
 
-		// Listen for progress events
-		const unlistenProgress = await listen('file_progress', (event) => {
-			const { id, progress } = event.payload;
-			files = files.map(f =>
-				f.id === id ? { ...f, progress, status: 'processing' } : f
-			);
-		});
+      listen('file_complete', ({ payload }) => {
+        files.update(fs => fs.map(f =>
+          f.id === payload.id
+            ? { ...f, status: 'done', outputSize: payload.output_size, report: payload.report, backupPath: payload.backup_path }
+            : f
+        ));
+      }),
 
-		return () => {
-			unlistenComplete();
-			unlistenError();
-			unlistenProgress();
-		};
-	});
+      listen('file_error', ({ payload }) => {
+        files.update(fs => fs.map(f =>
+          f.id === payload.id
+            ? { ...f, status: 'error', error: payload.error }
+            : f
+        ));
+      }),
 
-	function handleDragEnter(e) {
-		e.preventDefault();
-		e.stopPropagation();
-		dragActive = true;
-	}
+      listen('file_cancelled', ({ payload }) => {
+        files.update(fs => fs.map(f =>
+          f.id === payload.id ? { ...f, status: 'cancelled' } : f
+        ));
+      }),
 
-	function handleDragLeave(e) {
-		e.preventDefault();
-		e.stopPropagation();
-		dragActive = false;
-	}
+      listen('batch_complete', () => {
+        batchRunning.set(false);
+      }),
 
-	function handleDragOver(e) {
-		e.preventDefault();
-		e.stopPropagation();
-	}
+      listen('tauri://drag-enter', ({ payload }) => {
+        const count = payload?.paths?.filter(p => p.toLowerCase().endsWith('.pdf')).length ?? null;
+        dragActive.set({ count });
+      }),
 
-	async function handleDrop(e) {
-		e.preventDefault();
-		e.stopPropagation();
-		dragActive = false;
+      listen('tauri://drag-over', () => {
+        dragActive.update(d => d ?? { count: null });
+      }),
 
-		const items = e.dataTransfer.items;
-		if (!items) return;
+      listen('tauri://drag-leave', () => {
+        dragActive.set(null);
+      }),
 
-		for (let i = 0; i < items.length; i++) {
-			if (items[i].kind === 'file') {
-				const file = items[i].getAsFile();
-				if (file.type === 'application/pdf' || file.name.endsWith('.pdf')) {
-					files = [...files, {
-						id: Math.random(),
-						name: file.name,
-						path: file.webkitRelativePath || file.name,
-						size: file.size,
-						progress: 0,
-						status: 'pending',
-						error: null,
-						outputSize: null,
-						selected: true,
-					}];
-				}
-			}
-		}
-	}
+      listen('tauri://drag-drop', ({ payload }) => {
+        dragActive.set(null);
+        if (payload?.paths?.length) addFilePaths(payload.paths);
+      }),
+    ]).then(us => {
+      // onMount cleanup must be synchronous; if the component was torn down
+      // before the listeners resolved, detach them right away.
+      if (disposed) us.forEach(u => u());
+      else unlisteners = us;
+    }).catch(e => console.error('Failed to attach event listeners:', e));
 
-	async function selectFolder() {
-		try {
-			const folder = await invoke('select_folder');
-			if (folder) {
-				settings.outputFolder = folder;
-				await invoke('save_settings', { settings });
-			}
-		} catch (e) {
-			console.error('Failed to select folder:', e);
-		}
-	}
+    return () => {
+      disposed = true;
+      unlisteners.forEach(u => u());
+    };
+  });
 
-	async function startProcessing() {
-		const selectedFiles = files.filter(f => f.selected && f.status === 'pending');
-		if (selectedFiles.length === 0) return;
+  async function addFilePaths(paths) {
+    const pdfPaths = paths.filter(p => p.toLowerCase().endsWith('.pdf'));
+    const skipped = paths.length - pdfPaths.length;
 
-		try {
-			await invoke('process_files', {
-				files: selectedFiles.map(f => ({ id: f.id, path: f.path })),
-				settings,
-			});
+    if (skipped > 0) {
+      showToast(skipped === 1 ? '1 non-PDF file ignored' : `${skipped} non-PDF files ignored`);
+    }
+    if (pdfPaths.length === 0) return;
 
-			// Update file statuses
-			files = files.map(f =>
-				selectedFiles.find(sf => sf.id === f.id)
-					? { ...f, status: 'processing' }
-					: f
-			);
-		} catch (e) {
-			console.error('Failed to start processing:', e);
-		}
-	}
+    const existing = new Set(get(files).map(f => f.path));
+    const newPaths = pdfPaths.filter(p => !existing.has(p));
+    if (newPaths.length === 0) return;
 
-	function handleFileUpdate(e) {
-		const updated = e.detail;
-		files = files.map(f => f.id === updated.id ? { ...f, ...updated } : f);
-	}
+    let stats = [];
+    try {
+      stats = await invoke('stat_files', { paths: newPaths });
+    } catch {
+      stats = newPaths.map(p => ({ path: p, size: 0 }));
+    }
 
-	function handleSettingsChange(e) {
-		settings = e.detail;
-		invoke('save_settings', { settings }).catch(console.error);
-	}
+    const newFiles = stats.map(({ path, size }) => ({
+      id: crypto.randomUUID(),
+      name: path.split(/[\\/]/).pop(),
+      folder: path.replace(/[\\/][^\\/]+$/, ''),
+      path,
+      size,
+      outputSize: null,
+      status: 'pending',
+      pct: 0,
+      pages: null,
+      error: null,
+      report: null,
+      backupPath: null,
+      selected: true,
+    }));
+
+    files.update(fs => [...fs, ...newFiles]);
+  }
+
+  async function addFiles() {
+    try {
+      const selected = await open({
+        multiple: true,
+        filters: [{ name: 'PDF', extensions: ['pdf'] }],
+      });
+      if (!selected) return;
+      addFilePaths(Array.isArray(selected) ? selected : [selected]);
+    } catch (e) {
+      console.error('open dialog failed:', e);
+    }
+  }
+
+  async function selectFolder() {
+    try {
+      const folder = await open({ directory: true, multiple: false });
+      if (!folder) return;
+      settings.update(s => {
+        const updated = { ...s, outputFolder: folder };
+        invoke('save_settings', { newSettings: updated }).catch(console.error);
+        return updated;
+      });
+    } catch (e) {
+      console.error('folder dialog failed:', e);
+    }
+  }
+
+  async function startProcessing() {
+    const currentFiles = get(files);
+    const currentSettings = get(settings);
+    const selected = currentFiles.filter(f => f.selected && f.status === 'pending');
+    if (selected.length === 0 || !currentSettings.outputFolder) return;
+
+    batchRunning.set(true);
+    try {
+      // Settings edits are saved on a debounce; persist the current values so
+      // the backend never runs a batch with stale options.
+      await invoke('save_settings', { newSettings: currentSettings });
+      await invoke('process_files', {
+        files: selected.map(f => ({ id: f.id, path: f.path })),
+      });
+    } catch (e) {
+      batchRunning.set(false);
+      console.error('process_files failed:', e);
+      showToast(`Could not start: ${e}`);
+    }
+  }
+
+  async function cancelAll() {
+    try { await invoke('cancel_all'); } catch (e) { console.error(e); }
+  }
+
+  async function cancelFile(id) {
+    try { await invoke('cancel_file', { id }); } catch (e) { console.error(e); }
+  }
+
+  function showToast(message) {
+    const id = Date.now();
+    toasts = [...toasts, { id, message }];
+    setTimeout(() => { toasts = toasts.filter(t => t.id !== id); }, 2600);
+  }
 </script>
 
-<div class="container">
-	<div class="main-content">
-		<FileList
-			bind:files
-			on:update={handleFileUpdate}
-			{dragActive}
-			{handleDragEnter}
-			{handleDragLeave}
-			{handleDragOver}
-			{handleDrop}
-			on:startProcessing={startProcessing}
-			on:selectFolder={selectFolder}
-		/>
-		<Settings
-			bind:settings
-			{selectFolder}
-			on:change={handleSettingsChange}
-		/>
-	</div>
+<div class="app">
+  <FileList {addFiles} {startProcessing} {cancelAll} {cancelFile} {selectFolder} />
+  <Settings {selectFolder} />
 </div>
 
+{#if $dragActive}
+  <div class="drag-overlay">
+    <div class="drag-card">
+      <div class="drag-title">
+        {#if $dragActive.count !== null}
+          Drop to add {$dragActive.count === 1 ? '1 PDF' : `${$dragActive.count} PDFs`}
+        {:else}
+          Drop to add PDFs
+        {/if}
+      </div>
+      <div class="drag-sub">Non-PDF files are ignored</div>
+    </div>
+  </div>
+{/if}
+
+{#if toasts.length}
+  <div class="toasts">
+    {#each toasts as toast (toast.id)}
+      <div class="toast">{toast.message}</div>
+    {/each}
+  </div>
+{/if}
+
 <style>
-	:global(*) {
-		margin: 0;
-		padding: 0;
-		box-sizing: border-box;
-	}
+  .app {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 300px;
+    height: 100vh;
+    overflow: hidden;
+  }
 
-	:global(body) {
-		font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-		background: #f5f5f5;
-		color: #333;
-	}
+  @media (max-width: 900px) {
+    .app { grid-template-columns: minmax(0, 1fr) 248px; }
+  }
 
-	.container {
-		display: flex;
-		height: 100vh;
-	}
+  .drag-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.15);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+    outline: 2px dashed var(--accent);
+    outline-offset: -12px;
+    pointer-events: none;
+  }
 
-	.main-content {
-		display: flex;
-		flex-direction: column;
-		flex: 1;
-	}
+  .drag-card {
+    text-align: center;
+    padding: 24px 32px;
+    background: var(--surface);
+    border-radius: 12px;
+    border: 1.5px solid var(--accent);
+  }
+
+  .drag-title {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--accent);
+    margin-bottom: 6px;
+  }
+
+  .drag-sub {
+    font-size: 12px;
+    color: var(--muted);
+  }
+
+  .toasts {
+    position: fixed;
+    bottom: 16px;
+    left: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    z-index: 200;
+    pointer-events: none;
+  }
+
+  .toast {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-size: 12px;
+    padding: 8px 12px;
+    max-width: 420px;
+    border-radius: 6px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+  }
 </style>

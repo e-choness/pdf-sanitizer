@@ -1,11 +1,15 @@
 services:
   pdf-sanitizer:
-    build: .
+    build:
+      context: .
+      target: toolchain
     container_name: pdf-sanitizer-dev
     volumes:
       - .:/app
       - app-node-modules:/app/node_modules
       - app-cargo-cache:/usr/local/cargo/registry
+      - app-cargo-git:/usr/local/cargo/git
+      - app-xwin-cache:/root/.cache/cargo-xwin
       - app-target:/app/src-tauri/target
     ports:
       - "5173:5173"  # Vite dev server
@@ -20,4 +24,6 @@ services:
 volumes:
   app-node-modules:
   app-cargo-cache:
+  app-cargo-git:
+  app-xwin-cache:
   app-target:

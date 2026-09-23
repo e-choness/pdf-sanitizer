@@ -10,7 +10,9 @@ on:
 
 jobs:
   build-windows:
-    runs-on: windows-latest
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
     strategy:
       matrix:
         include:
@@ -25,19 +27,57 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          cache-on-failure: true
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: '9'
+
       - name: Install Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '18'
+          node-version: '24'
+          cache: 'pnpm'
 
-      - name: Install pnpm
-        run: npm install -g pnpm
-
-      - name: Install dependencies
+      - name: Install frontend dependencies
         run: pnpm install
 
-      - name: Build Tauri app
-        run: pnpm tauri build --no-bundle --target ${{ matrix.target }}
+      - name: Check Svelte components
+        run: pnpm check
+
+      - name: Run frontend tests
+        run: pnpm test
+
+      - name: Build frontend
+        run: pnpm build
+
+      - name: Cache cargo-xwin
+        id: cache-cargo-xwin
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/cargo-xwin
+            ~/.cargo/.crates.toml
+            ~/.cargo/.crates2.json
+          key: cargo-xwin-${{ runner.os }}-locked
+
+      - name: Install cargo-xwin
+        if: steps.cache-cargo-xwin.outputs.cache-hit != 'true'
+        run: cargo install cargo-xwin --locked
+
+      - name: Cache MSVC CRT and Windows SDK
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/cargo-xwin
+          key: xwin-sdk-${{ runner.os }}-${{ matrix.target }}
+
+      - name: Build Windows binary
+        run: cd src-tauri && cargo xwin build --release --features custom-protocol --target ${{ matrix.target }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -66,5 +106,3 @@ jobs:
             - Not recommended for production use
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-

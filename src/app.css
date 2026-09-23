@@ -1,0 +1,87 @@
+/* Global reset and design tokens shared by all components. */
+
+:root {
+  color-scheme: light dark;
+
+  --canvas: #f5f5f4;
+  --surface: #ffffff;
+  --surface2: #f2f2f0;
+  --border: #e5e5e3;
+  --border2: #d4d4d1;
+  --text: #1c1c1a;
+  --muted: #6b6b66;
+  --accent: #2563eb;
+  --accent-h: #1d4ed8;
+  --procbg: #e8efff;
+  --ok: #15803d;
+  --okbg: #e6f4ea;
+  --err: #c62828;
+  --errbg: #fdecec;
+  --track: #d4d4d1;
+  --knob: #ffffff;
+
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--text);
+  background: var(--canvas);
+  -webkit-font-smoothing: antialiased;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --canvas: #161615;
+    --surface: #1e1e1d;
+    --surface2: #2a2a28;
+    --border: #2f2f2d;
+    --border2: #3d3d3a;
+    --text: #ececea;
+    --muted: #9a9a94;
+    --accent: #4f8cff;
+    --accent-h: #6a9eff;
+    --procbg: #1c2a45;
+    --ok: #4ade80;
+    --okbg: #16301f;
+    --err: #f87171;
+    --errbg: #3a1d1d;
+    --track: #3d3d3a;
+    --knob: #f5f5f4;
+  }
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  background: var(--canvas);
+  color: var(--text);
+}
+
+#app {
+  height: 100%;
+}
+
+p {
+  margin: 0;
+}
+
+button {
+  font: inherit;
+}
+
+button:focus-visible,
+input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}

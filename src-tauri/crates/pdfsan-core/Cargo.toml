@@ -1,0 +1,16 @@
+[package]
+name = "pdfsan-core"
+version = "0.1.0"
+edition = "2021"
+license = "PolyForm-Noncommercial-1.0.0"
+
+[dependencies]
+lopdf = { version = "0.36", default-features = false, features = ["chrono"] }
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
+flate2 = "1"
+thiserror = "1"
+tokio-util = { version = "0.7", features = ["rt"] }
+serde = { version = "1.0", features = ["derive"] }
+
+[dev-dependencies]
+tempfile = "3"

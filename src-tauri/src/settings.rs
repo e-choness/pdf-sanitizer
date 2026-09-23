@@ -1,46 +1,48 @@
-use crate::SanitizationSettings;
+use pdfsan_core::SanitizationSettings;
 use std::fs;
 use std::path::PathBuf;
 
 const SETTINGS_FILE: &str = "settings.json";
 
 pub fn save_settings(settings: &SanitizationSettings) -> Result<(), String> {
-    let json = serde_json::to_string_pretty(settings).map_err(|e| e.to_string())?;
-
     let path = get_settings_path();
-    fs::write(path, json).map_err(|e| e.to_string())?;
-
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let json = serde_json::to_string_pretty(settings).map_err(|e| e.to_string())?;
+    fs::write(&path, json).map_err(|e| e.to_string())?;
     Ok(())
 }
 
-pub fn load_settings() -> Result<SanitizationSettings, String> {
+pub fn load_settings() -> SanitizationSettings {
     let path = get_settings_path();
-
     if !path.exists() {
-        return Ok(default_settings());
+        return SanitizationSettings::default();
     }
-
-    let json = fs::read_to_string(path).map_err(|e| e.to_string())?;
-
-    serde_json::from_str(&json).map_err(|e| e.to_string())
+    match fs::read_to_string(&path) {
+        Err(_) => SanitizationSettings::default(),
+        Ok(json) => match serde_json::from_str::<SanitizationSettings>(&json) {
+            Ok(s) => {
+                // Clamp max_concurrent
+                SanitizationSettings {
+                    max_concurrent: s.max_concurrent.clamp(1, 8),
+                    ..s
+                }
+            }
+            Err(_) => {
+                // Rename corrupt file and use defaults
+                let bak = path.with_extension("json.bak");
+                let _ = fs::rename(&path, &bak);
+                log::warn!("settings.json was corrupt; renamed to .bak and reset to defaults");
+                SanitizationSettings::default()
+            }
+        },
+    }
 }
 
 fn get_settings_path() -> PathBuf {
-    let config_dir = dirs::config_dir().unwrap_or_else(|| PathBuf::from("."));
-
-    config_dir.join("pdf-sanitizer").join(SETTINGS_FILE)
-}
-
-pub fn default_settings() -> SanitizationSettings {
-    SanitizationSettings {
-        remove_metadata: true,
-        remove_scripts: true,
-        remove_embedded_files: true,
-        compress_images: false,
-        high_compression: false,
-        strip_external_links: false,
-        font_subsetting: false,
-        max_concurrent: 4,
-        output_folder: String::new(),
-    }
+    dirs::config_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("pdf-sanitizer")
+        .join(SETTINGS_FILE)
 }

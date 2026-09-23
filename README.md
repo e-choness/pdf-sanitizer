@@ -1,151 +1,112 @@
-# PDF Sanitizer
+<div align="center">
 
-A modern desktop application for sanitizing PDF files and removing potentially malicious content. Built with Tauri, Rust, and Svelte for a fast, lightweight, and beautiful user experience.
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/public/banner-dark.svg">
+  <img alt="PDF Sanitizer — strip scripts, attachments, links and metadata from PDFs, fully offline" src="docs/public/banner-light.svg" width="100%">
+</picture>
 
-## Features
+<br>
 
-- **Drag & Drop UI** - Simple file management with drag-and-drop support or file selection
-- **Batch Processing** - Process multiple files concurrently (configurable 1-8 concurrent files)
-- **Customizable Sanitization Options**:
-  - Remove metadata (default ON)
-  - Remove scripts/JavaScript (default ON)
-  - Remove embedded files (default ON)
-  - Strip external links/URLs (default OFF)
-  - Font subsetting (default OFF)
-  - Image compression (default OFF)
-- **File Management**:
-  - Per-file progress tracking with visual progress bar
-  - Stop individual files during processing
-  - Automatic original PDF backup to configurable folder
-  - Sanitized PDF replaces original location
-- **Settings**:
-  - Choose backup folder for original PDFs
-  - Configure concurrent processing threads
-  - All settings persisted locally
+[![Latest release](https://img.shields.io/github/v/release/e-choness/pdf-sanitizer?label=release&color=2563eb)](https://github.com/e-choness/pdf-sanitizer/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/e-choness/pdf-sanitizer/total?color=2563eb)](https://github.com/e-choness/pdf-sanitizer/releases)
+[![Tests](https://img.shields.io/github/actions/workflow/status/e-choness/pdf-sanitizer/test.yml?branch=main&label=tests)](https://github.com/e-choness/pdf-sanitizer/actions/workflows/test.yml)
+[![Docs](https://img.shields.io/github/actions/workflow/status/e-choness/pdf-sanitizer/docs.yml?branch=main&label=docs)](https://e-choness.github.io/pdf-sanitizer/)
+[![License: PolyForm Noncommercial](https://img.shields.io/badge/license-PolyForm%20NC%201.0.0-lightgrey)](LICENSE)
 
-## Building & Running with Docker
+[![Platform: Windows](https://img.shields.io/badge/platform-Windows%20x64-0078D6?logo=windows&logoColor=white)](https://github.com/e-choness/pdf-sanitizer/releases/latest)
+[![Tauri 2](https://img.shields.io/badge/Tauri-2-24C8DB?logo=tauri&logoColor=white)](https://tauri.app)
+[![Rust](https://img.shields.io/badge/Rust-stable-B7410E?logo=rust&logoColor=white)](https://www.rust-lang.org)
+[![Svelte 5](https://img.shields.io/badge/Svelte-5-FF3E00?logo=svelte&logoColor=white)](https://svelte.dev)
+[![Last commit](https://img.shields.io/github/last-commit/e-choness/pdf-sanitizer)](https://github.com/e-choness/pdf-sanitizer/commits/main)
 
-### Prerequisites
+**[Download](https://github.com/e-choness/pdf-sanitizer/releases/latest)** ·
+**[Documentation](https://e-choness.github.io/pdf-sanitizer/)** ·
+**[Changelog](https://e-choness.github.io/pdf-sanitizer/changelog)** ·
+**[Report a bug](https://github.com/e-choness/pdf-sanitizer/issues/new)**
 
-- Docker installed on your system
+</div>
 
-### Quick Start
+---
 
-```bash
-# Clone and enter the repository
-git clone <repo-url>
-cd PDFSanitizer
+PDF files can carry JavaScript, auto-run actions, hidden attachments, tracking
+links and metadata about who made them and with what. **PDF Sanitizer** removes
+all of that and swaps each file for a clean copy, keeping the original in a
+backup folder. It is a single offline Windows app: no installer, no account and
+no network access.
 
-# Build the Docker image (one-time)
-docker build -t pdf-sanitizer .
+## ✨ Features
 
-# Run the development environment (builds the app)
-docker-compose up
-```
+| | |
+|---|---|
+| 🛡️ **Removes active content** | JavaScript, `OpenAction`/`AA` triggers, launch, submit-form and media actions, XFA forms |
+| 📎 **Removes hidden payloads** | Embedded files and file-attachment annotations |
+| 🕵️ **Removes metadata** | Author, dates, producer software, XMP streams |
+| 🔗 **Strips outbound links** | URL and remote-file links (optional) |
+| ✅ **Verifies every result** | Re-parses the output and checks page count, content streams and leftover scripts before touching the original |
+| 🗂️ **Keeps originals** | Moves each original to a backup folder you choose; the clean file takes its place |
+| ⚡ **Batch processing** | Up to 8 files in parallel, with per-file progress, stop and retry |
+| 🪶 **Shrinks files** | Optional TrueType font subsetting and JPEG image recompression |
 
-The application will be available at `http://localhost:5173` during development.
+See **[What gets removed](https://e-choness.github.io/pdf-sanitizer/guide/sanitization)**
+for the full list.
 
-### Building for Release
+## 🚀 Quick start
 
-```bash
-# Build inside Docker
-docker-compose run --rm app cargo tauri build
+1. Download **`pdf-sanitizer.exe`** from the
+   [latest release](https://github.com/e-choness/pdf-sanitizer/releases/latest).
+   There's no installer; just run it.
+2. Drag PDFs onto the window, or click **Add files…**.
+3. Choose a **Backup folder** under *Settings → Output*.
+4. Click **Sanitize**.
 
-# Find the executable in: src-tauri/target/release/
-```
+Cleaned PDFs are left at their original paths, and the originals are in the
+backup folder. → [User guide](https://e-choness.github.io/pdf-sanitizer/guide/getting-started)
 
-## Project Structure
+> [!NOTE]
+> The executable is not code-signed. If Windows SmartScreen warns you, choose
+> **More info → Run anyway**. The app needs the WebView2 runtime, which comes
+> with Windows 11 and up-to-date Windows 10.
 
-```
-.
-├── src/                          # Frontend (Svelte)
-│   ├── App.svelte                # Main app component
-│   ├── main.js                   # Entry point
-│   └── components/
-│       ├── FileList.svelte        # File management UI
-│       ├── FileRow.svelte         # Individual file row
-│       └── Settings.svelte        # Settings panel
-├── src-tauri/                     # Backend (Rust)
-│   ├── src/
-│   │   ├── main.rs               # Tauri commands & app setup
-│   │   ├── pdf_sanitizer.rs      # PDF processing logic
-│   │   └── settings.rs           # Settings persistence
-│   ├── Cargo.toml                # Rust dependencies
-│   └── tauri.conf.json           # Tauri configuration
-├── index.html                     # HTML template
-├── package.json                   # Frontend dependencies
-├── vite.config.js                # Vite configuration
-├── Dockerfile                     # Docker build configuration
-└── docker-compose.yml            # Docker compose setup
-```
-
-## Development
-
-### Local Setup (without Docker)
+## 🛠️ Build from source
 
 ```bash
-# Install Rust (if not already installed)
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-
-# Install Node.js and pnpm
-# https://nodejs.org/ (v18+)
-npm install -g pnpm
-
-# Install dependencies
+git clone https://github.com/e-choness/pdf-sanitizer.git
+cd pdf-sanitizer
 pnpm install
-
-# Install Tauri CLI
-cargo install tauri-cli
-
-# Run in development mode
-cargo tauri dev
+pnpm tauri dev                                   # run with hot reload
 ```
 
-## How It Works
+Or cross-compile the Windows `.exe` from any OS with Docker:
 
-1. **Drop or select PDF files** into the drag-drop area
-2. **Configure sanitization options** in the settings panel
-3. **Click "Start Converting"** to begin processing
-4. **Monitor progress** for each file with the progress bar
-5. **Original PDFs** are moved to your configured backup folder
-6. **Sanitized PDFs** remain in the original file location
+```bash
+docker build --target export --output . .
+```
 
-## Security Considerations
+| Guide | |
+|---|---|
+| [Local setup](https://e-choness.github.io/pdf-sanitizer/development/setup) | Prerequisites, project layout, commands |
+| [Architecture](https://e-choness.github.io/pdf-sanitizer/development/architecture) | How the UI, Tauri shell and core library fit together |
+| [Testing](https://e-choness.github.io/pdf-sanitizer/development/testing) | Automated checks and the release checklist |
+| [Building](https://e-choness.github.io/pdf-sanitizer/development/building) | Docker and native builds, build profiles, caching |
+| [Releasing](https://e-choness.github.io/pdf-sanitizer/development/releasing) | Versioning, stable and beta releases, docs deployment |
 
-PDF processing involves parsing and rendering files which may contain exploits. The sanitizer:
+## 📈 Project activity
 
-- Strips metadata, scripts, and embedded files
-- Re-renders PDFs to remove malicious content
-- Runs entirely locally - no network communication
-- Files are processed with configurable concurrency limits
+<a href="https://github.com/e-choness/pdf-sanitizer/graphs/contributors">
+  <img alt="Contributors" src="https://contrib.rocks/image?repo=e-choness/pdf-sanitizer">
+</a>
 
-For maximum security with untrusted PDFs, consider:
+<a href="https://star-history.com/#e-choness/pdf-sanitizer&Date">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=e-choness/pdf-sanitizer&type=Date&theme=dark">
+    <img alt="Star history" src="https://api.star-history.com/svg?repos=e-choness/pdf-sanitizer&type=Date" width="600">
+  </picture>
+</a>
 
-- Running on an isolated machine
-- Processing in a sandboxed environment
-- Regular security audits of the sanitization logic
+## 📄 License
 
-## Dependencies
+Licensed under the [PolyForm Noncommercial License 1.0.0](LICENSE). It's free
+for personal, research, educational and other noncommercial use. Commercial
+use requires a separate license from the author.
 
-### Frontend
-
-- Svelte 4.0
-- Tauri API (@tauri-apps/api)
-- Vite
-
-### Backend
-
-- Tauri 1.5
-- Rust 2021 edition
-- Tokio (async runtime)
-- Serde (serialization)
-- RFD (file dialogs)
-
-## License
-
-See LICENSE file for details.
-
-## Credits
-
-Original CLI implementation by Lucas Andrade Cioffi
-Modern desktop UI by Beili (Echo) Yin
+Copyright © 2026 Beili (Echo) Yin
