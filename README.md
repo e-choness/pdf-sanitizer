@@ -170,9 +170,8 @@ Go to **Actions → Build Beta Release → Run workflow** and enter a version st
 
 ## License
 
-See [LICENSE](LICENSE) for details.
+Licensed under the [PolyForm Noncommercial License 1.0.0](LICENSE).
+Free for personal, research, educational and other noncommercial use;
+commercial use requires a separate license from the author.
 
-## Credits
-
-Original CLI implementation by Lucas Andrade Cioffi  
-Modern desktop UI by Beili (Echo) Yin
+Copyright (c) 2026 Beili (Echo) Yin
