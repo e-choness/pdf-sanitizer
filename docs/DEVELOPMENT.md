@@ -96,14 +96,29 @@ Backend → Frontend (Tauri Events):
 ### With Docker (Cross-compile Windows .exe)
 
 ```bash
-# Build the Docker image (uses cargo-xwin to cross-compile Windows .exe from Linux)
-docker build -t pdf-sanitizer-builder .
+# Build and write pdf-sanitizer.exe to the current directory
+# (uses cargo-xwin to cross-compile the Windows .exe from Linux)
+docker build --target export --output . .
 
-# Extract the .exe
+# Or build an image and extract the .exe from it
+docker build -t pdf-sanitizer-builder .
 docker create --name extract pdf-sanitizer-builder
 docker cp extract:/pdf-sanitizer.exe ./pdf-sanitizer.exe
 docker rm extract
 ```
+
+For quicker local test builds, skip link-time optimization with the
+`fast-release` profile (the binary is somewhat larger and slower; releases
+always use `release`):
+
+```bash
+docker build --build-arg PROFILE=fast-release --target export --output . .
+```
+
+Rebuilds are incremental: crate downloads, the MSVC CRT/Windows SDK fetched by
+cargo-xwin, the pnpm store and `src-tauri/target` are kept in BuildKit cache
+mounts, so only what changed is re-downloaded or recompiled. Run
+`docker builder prune` to clear them.
 
 ### Local Setup (Requires Rust + Node.js)
 
@@ -140,7 +155,7 @@ pnpm preview    # Preview production build
 ```bash
 cd src-tauri
 cargo build              # Debug build
-cargo build --release   # Optimized release build
+cargo build --release --features custom-protocol   # Optimized release build
 cargo fmt               # Format code
 cargo clippy            # Lint and suggestions
 ```

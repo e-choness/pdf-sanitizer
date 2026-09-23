@@ -19,14 +19,12 @@ pub fn preflight_backup_folder(folder: &str) -> Result<(), SanitizeError> {
         ));
     }
     let dir = Path::new(folder);
-    fs::create_dir_all(dir).map_err(|e| {
-        SanitizeError::BackupFolderUnwritable(format!("cannot create: {e}"))
-    })?;
+    fs::create_dir_all(dir)
+        .map_err(|e| SanitizeError::BackupFolderUnwritable(format!("cannot create: {e}")))?;
     // Probe write
     let probe = dir.join(".pdfsan-probe");
-    fs::write(&probe, b"").map_err(|e| {
-        SanitizeError::BackupFolderUnwritable(format!("not writable: {e}"))
-    })?;
+    fs::write(&probe, b"")
+        .map_err(|e| SanitizeError::BackupFolderUnwritable(format!("not writable: {e}")))?;
     let _ = fs::remove_file(&probe);
     Ok(())
 }
@@ -70,7 +68,7 @@ pub async fn run_batch(
     app: AppHandle,
     tokens: std::sync::Arc<tokio::sync::Mutex<HashMap<String, CancellationToken>>>,
     batch_token: CancellationToken,
-) {
+) -> serde_json::Value {
     let settings = std::sync::Arc::new(settings);
     let max = settings.max_concurrent.clamp(1, 8) as usize;
     let semaphore = std::sync::Arc::new(Semaphore::new(max));
@@ -120,19 +118,17 @@ pub async fn run_batch(
                     &path,
                     &settings_clone,
                     &token_clone,
-                    &mut |stage| {
-                        match &stage {
-                            Stage::Rewriting { pct } => {
-                                emit_progress(&app_clone, &id_clone, "rewriting", *pct, None);
-                            }
-                            Stage::Optimizing { pct } => {
-                                emit_progress(&app_clone, &id_clone, "optimizing", *pct, None);
-                            }
-                            Stage::Saving => {
-                                emit_progress(&app_clone, &id_clone, "saving", 99, None);
-                            }
-                            _ => {}
+                    &mut |stage| match &stage {
+                        Stage::Rewriting { pct } => {
+                            emit_progress(&app_clone, &id_clone, "rewriting", *pct, None);
                         }
+                        Stage::Optimizing { pct } => {
+                            emit_progress(&app_clone, &id_clone, "optimizing", *pct, None);
+                        }
+                        Stage::Saving => {
+                            emit_progress(&app_clone, &id_clone, "saving", 99, None);
+                        }
+                        _ => {}
                     },
                 )
             })
@@ -176,7 +172,12 @@ pub async fn run_batch(
             })
             .await;
 
-            if let Ok(Err(msg)) = ver_result {
+            // Never replace the original unless verification positively passed.
+            let ver_result = match ver_result {
+                Ok(r) => r,
+                Err(e) => Err(format!("verifier crashed: {e}")),
+            };
+            if let Err(msg) = ver_result {
                 let _ = fs::remove_file(&temp_path);
                 let _ = app.emit(
                     "file_error",
@@ -196,13 +197,25 @@ pub async fn run_batch(
             let backup_folder = settings.output_folder.clone();
 
             let move_result = tokio::task::spawn_blocking(move || {
-                let backup_path = move_to_backup(&orig, &backup_folder)?;
+                let backup_path = match move_to_backup(&orig, &backup_folder) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        let _ = fs::remove_file(&temp_path);
+                        return Err(format!("backup failed: {e}"));
+                    }
+                };
                 // Move temp → original path
                 if let Err(e) = fs::rename(&temp_path, &orig) {
-                    // Try to restore backup
-                    let _ = fs::rename(&backup_path, &orig);
                     let _ = fs::remove_file(&temp_path);
-                    return Err(format!("swap failed: {e}"));
+                    // Restore the original; the backup folder may be on another
+                    // volume, so fall back to copy when rename is not possible.
+                    let restored = fs::rename(&backup_path, &orig).is_ok()
+                        || fs::copy(&backup_path, &orig).is_ok();
+                    return Err(if restored {
+                        format!("swap failed: {e}. Original restored.")
+                    } else {
+                        format!("swap failed: {e}. Original is in {}", backup_path.display())
+                    });
                 }
                 Ok(backup_path)
             })
@@ -227,20 +240,14 @@ pub async fn run_batch(
                 }
                 Ok(Err(e)) => {
                     let msg = e;
-                    let _ = app.emit(
-                        "file_error",
-                        serde_json::json!({ "id": id2, "error": msg }),
-                    );
+                    let _ = app.emit("file_error", serde_json::json!({ "id": id2, "error": msg }));
                     let mut map = tokens.lock().await;
                     map.remove(&id2);
                     (false, false, 0i64)
                 }
                 Err(e) => {
                     let msg = e.to_string();
-                    let _ = app.emit(
-                        "file_error",
-                        serde_json::json!({ "id": id2, "error": msg }),
-                    );
+                    let _ = app.emit("file_error", serde_json::json!({ "id": id2, "error": msg }));
                     let mut map = tokens.lock().await;
                     map.remove(&id2);
                     (false, false, 0i64)
@@ -254,23 +261,27 @@ pub async fn run_batch(
     for h in handles {
         match h.await {
             Ok((did_ok, did_cancel, saved)) => {
-                if did_ok { ok += 1; bytes_saved += saved; }
-                else if did_cancel { cancelled += 1; }
-                else { failed += 1; }
+                if did_ok {
+                    ok += 1;
+                    bytes_saved += saved;
+                } else if did_cancel {
+                    cancelled += 1;
+                } else {
+                    failed += 1;
+                }
             }
-            Err(_) => { failed += 1; }
+            Err(_) => {
+                failed += 1;
+            }
         }
     }
 
-    let _ = app.emit(
-        "batch_complete",
-        serde_json::json!({
-            "ok": ok,
-            "failed": failed,
-            "cancelled": cancelled,
-            "bytes_saved": bytes_saved,
-        }),
-    );
+    serde_json::json!({
+        "ok": ok,
+        "failed": failed,
+        "cancelled": cancelled,
+        "bytes_saved": bytes_saved,
+    })
 }
 
 fn emit_progress(app: &AppHandle, id: &str, stage: &str, pct: u8, pages: Option<u32>) {

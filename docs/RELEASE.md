@@ -223,12 +223,12 @@ If you want to build locally without GitHub Actions:
 pnpm build
 
 # Build for current platform
-cd src-tauri && cargo build --release
+cd src-tauri && cargo build --release --features custom-protocol
 
 # Cross-compile Windows .exe from Linux/macOS (requires cargo-xwin)
 cargo install cargo-xwin --locked
 rustup target add x86_64-pc-windows-msvc
-cargo xwin build --release --target x86_64-pc-windows-msvc
+cargo xwin build --release --features custom-protocol --target x86_64-pc-windows-msvc
 ```
 
 Windows output location: `src-tauri/target/x86_64-pc-windows-msvc/release/pdf-sanitizer.exe`

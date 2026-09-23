@@ -1,4 +1,5 @@
 mod error;
+mod fonts;
 mod sanitizer;
 
 #[cfg(test)]

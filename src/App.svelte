@@ -7,19 +7,18 @@
   import { files, settings, batchRunning, dragActive } from './lib/store.js';
   import FileList from './components/FileList.svelte';
   import Settings from './components/Settings.svelte';
-  import './app.css';
 
   let toasts = [];
 
-  onMount(async () => {
-    try {
-      const saved = await invoke('load_settings');
-      settings.update(s => ({ ...s, ...saved }));
-    } catch (e) {
-      console.error('Failed to load settings:', e);
-    }
+  onMount(() => {
+    let disposed = false;
+    let unlisteners = [];
 
-    const unlisteners = await Promise.all([
+    invoke('load_settings')
+      .then(saved => settings.update(s => ({ ...s, ...saved })))
+      .catch(e => console.error('Failed to load settings:', e));
+
+    Promise.all([
       listen('file_progress', ({ payload }) => {
         files.update(fs => fs.map(f =>
           f.id === payload.id
@@ -71,9 +70,17 @@
         dragActive.set(null);
         if (payload?.paths?.length) addFilePaths(payload.paths);
       }),
-    ]);
+    ]).then(us => {
+      // onMount cleanup must be synchronous; if the component was torn down
+      // before the listeners resolved, detach them right away.
+      if (disposed) us.forEach(u => u());
+      else unlisteners = us;
+    }).catch(e => console.error('Failed to attach event listeners:', e));
 
-    return () => unlisteners.forEach(u => u());
+    return () => {
+      disposed = true;
+      unlisteners.forEach(u => u());
+    };
   });
 
   async function addFilePaths(paths) {
@@ -148,14 +155,18 @@
     const selected = currentFiles.filter(f => f.selected && f.status === 'pending');
     if (selected.length === 0 || !currentSettings.outputFolder) return;
 
+    batchRunning.set(true);
     try {
-      batchRunning.set(true);
+      // Settings edits are saved on a debounce; persist the current values so
+      // the backend never runs a batch with stale options.
+      await invoke('save_settings', { newSettings: currentSettings });
       await invoke('process_files', {
         files: selected.map(f => ({ id: f.id, path: f.path })),
       });
     } catch (e) {
       batchRunning.set(false);
       console.error('process_files failed:', e);
+      showToast(`Could not start: ${e}`);
     }
   }
 
@@ -264,6 +275,7 @@
     color: var(--text);
     font-size: 12px;
     padding: 8px 12px;
+    max-width: 420px;
     border-radius: 6px;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
   }

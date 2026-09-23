@@ -42,6 +42,9 @@
     if (report.images_recompressed > 0) {
       parts.push(`${report.images_recompressed} image${report.images_recompressed > 1 ? 's' : ''} compressed`);
     }
+    if (report.fonts_subset > 0) {
+      parts.push(`${report.fonts_subset} font${report.fonts_subset > 1 ? 's' : ''} subset`);
+    }
     if (parts.length === 0) return 'Nothing to remove · rewritten and verified';
     return parts.join(' · ');
   }

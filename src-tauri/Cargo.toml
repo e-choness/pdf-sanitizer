@@ -21,7 +21,21 @@ tokio-util = { version = "0.7", features = ["rt"] }
 dirs = "5.0"
 log = "0.4"
 
+[features]
+# Serve the embedded frontend (dist/) instead of devUrl. The Tauri CLI enables
+# this for `tauri build`; plain `cargo build` must pass `--features custom-protocol`
+# or the binary is built in dev mode and shows a blank window.
+custom-protocol = ["tauri/custom-protocol"]
+
 [profile.release]
 panic = "abort"
 codegen-units = 1
 lto = true
+
+# Quicker optimized builds for local testing: skips LTO and splits codegen so
+# only changed code is re-optimized. Releases still use `release`.
+[profile.fast-release]
+inherits = "release"
+lto = false
+codegen-units = 16
+incremental = true

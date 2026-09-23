@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-lopdf = { version = "0.34", default-features = false, features = ["nom_parser", "chrono_time"] }
+lopdf = { version = "0.36", default-features = false, features = ["chrono"] }
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 flate2 = "1"
 thiserror = "1"

@@ -81,7 +81,7 @@ cd src-tauri && cargo clippy --workspace -- -D warnings
 
 **Local** (Windows, requires MSVC toolchain):
 ```bash
-cd src-tauri && cargo build --release
+cd src-tauri && cargo build --release --features custom-protocol
 # Output: src-tauri/target/release/pdf-sanitizer.exe
 ```
 

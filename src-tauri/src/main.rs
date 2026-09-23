@@ -65,9 +65,17 @@ async fn process_files(
     state: State<'_, AppState>,
     app_handle: tauri::AppHandle,
 ) -> Result<(), String> {
+    // Claim the running flag atomically so two concurrent invocations cannot
+    // both start a batch.
     if state
         .batch_running
-        .load(std::sync::atomic::Ordering::SeqCst)
+        .compare_exchange(
+            false,
+            true,
+            std::sync::atomic::Ordering::SeqCst,
+            std::sync::atomic::Ordering::SeqCst,
+        )
+        .is_err()
     {
         return Err("A batch is already running".to_string());
     }
@@ -76,23 +84,33 @@ async fn process_files(
 
     // Pre-flight: backup folder
     if let Err(e) = preflight_backup_folder(&settings.output_folder) {
+        state
+            .batch_running
+            .store(false, std::sync::atomic::Ordering::SeqCst);
         let _ = app_handle.emit("batch_error", serde_json::json!({ "error": e.to_string() }));
         return Err(e.to_string());
     }
 
     // Parse file tasks
+    let mut rejected = 0u32;
     let tasks: Vec<FileTask> = files
         .into_iter()
         .filter_map(|v| {
             let id = v.get("id")?.as_str()?.to_string();
             let path = v.get("path")?.as_str()?.to_string();
-            // Per-file pre-flight: exists, readable, .pdf extension, %PDF header
+            // Per-file pre-flight: exists and has a .pdf extension (any case).
+            // The %PDF header is checked by the sanitizer itself.
             let p = std::path::Path::new(&path);
-            if !p.exists() || p.extension().and_then(|e| e.to_str()) != Some("pdf") {
+            let is_pdf = p
+                .extension()
+                .and_then(|e| e.to_str())
+                .is_some_and(|e| e.eq_ignore_ascii_case("pdf"));
+            if !p.is_file() || !is_pdf {
                 let _ = app_handle.emit(
                     "file_error",
                     serde_json::json!({ "id": id, "error": "File not found or not a PDF." }),
                 );
+                rejected += 1;
                 return None;
             }
             Some(FileTask { id, path })
@@ -100,22 +118,32 @@ async fn process_files(
         .collect();
 
     if tasks.is_empty() {
+        // Nothing to run, but the UI is waiting for the batch to finish.
+        state
+            .batch_running
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+        let _ = app_handle.emit(
+            "batch_complete",
+            serde_json::json!({ "ok": 0, "failed": rejected, "cancelled": 0, "bytes_saved": 0 }),
+        );
         return Ok(());
     }
 
     let batch_token = CancellationToken::new();
     *state.batch_token.lock().await = Some(batch_token.clone());
-    state
-        .batch_running
-        .store(true, std::sync::atomic::Ordering::SeqCst);
 
     let tokens = state.tokens.clone();
     let running_flag = state.batch_running.clone();
     let app = app_handle.clone();
 
     tokio::spawn(async move {
-        run_batch(tasks, settings, app, tokens, batch_token).await;
+        let mut summary = run_batch(tasks, settings, app.clone(), tokens, batch_token).await;
+        summary["failed"] =
+            serde_json::json!(summary["failed"].as_u64().unwrap_or(0) + u64::from(rejected));
+        // Clear the flag before notifying the UI, otherwise a new batch started
+        // right after `batch_complete` would be refused as "already running".
         running_flag.store(false, std::sync::atomic::Ordering::SeqCst);
+        let _ = app.emit("batch_complete", summary);
     });
 
     Ok(())

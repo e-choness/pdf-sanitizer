@@ -1,10 +1,11 @@
-use lopdf::{Document, Object, ObjectId};
+use lopdf::{Dictionary, Document, Object, ObjectId, Stream};
+use std::collections::HashSet;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio_util::sync::CancellationToken;
 
-use crate::{SanitizeError, SanitizationSettings};
+use crate::{SanitizationSettings, SanitizeError};
 
 #[derive(Debug, Default, Clone, serde::Serialize)]
 pub struct SanitizeReport {
@@ -58,11 +59,11 @@ pub fn sanitize(
 
     let mut doc = Document::load(input).map_err(|e| SanitizeError::Parse(e.to_string()))?;
 
-    // Handle encryption
+    // Document::load already decrypts files that open with an empty user
+    // password (owner-password-only / permission-restricted PDFs), so an
+    // Encrypt dictionary that survives loading means a real password is needed.
     if doc.is_encrypted() {
-        if doc.decrypt("").is_err() {
-            return Err(SanitizeError::Encrypted);
-        }
+        return Err(SanitizeError::Encrypted);
     }
 
     let page_count = doc.get_pages().len() as u32;
@@ -135,6 +136,14 @@ pub fn sanitize(
     }
 
     // --- Optimizing passes ---
+    if settings.font_subsetting {
+        progress(Stage::Optimizing { pct: 0 });
+        report.fonts_subset = crate::fonts::subset_fonts(&mut doc, cancel);
+        if cancel.is_cancelled() {
+            return Err(SanitizeError::Cancelled);
+        }
+    }
+
     if settings.compress_images {
         let image_ids = collect_image_ids(&doc);
         let total = image_ids.len().max(1);
@@ -142,7 +151,12 @@ pub fn sanitize(
             if cancel.is_cancelled() {
                 return Err(SanitizeError::Cancelled);
             }
-            compress_image(&mut doc, *img_id, settings.image_quality.jpeg_quality(), &mut report);
+            compress_image(
+                &mut doc,
+                *img_id,
+                settings.image_quality.jpeg_quality(),
+                &mut report,
+            );
             progress(Stage::Optimizing {
                 pct: ((i + 1) * 100 / total) as u8,
             });
@@ -215,70 +229,123 @@ fn remove_metadata_pass(doc: &mut Document, report: &mut SanitizeReport) {
 
 // ---- Scripts pass ----
 
+/// Actions can hang off almost any dictionary (catalog, pages, annotations,
+/// form fields, outline items, action chains via /Next), either as indirect
+/// references or inline dictionaries. Rather than chase each known location,
+/// walk every object in the file, including nested direct dictionaries.
 fn remove_scripts_pass(doc: &mut Document, report: &mut SanitizeReport) {
-    let catalog_id = match doc
-        .trailer
-        .get(b"Root")
-        .ok()
-        .and_then(|o| o.as_reference().ok())
-    {
-        Some(id) => id,
-        None => return,
-    };
+    let dangerous: HashSet<ObjectId> = doc
+        .objects
+        .iter()
+        .filter_map(|(&id, obj)| match obj {
+            Object::Dictionary(d) if is_dangerous_action(d) => Some(id),
+            _ => None,
+        })
+        .collect();
 
-    // Collect the Names ref before mutating
-    let names_id = match doc.objects.get(&catalog_id) {
-        Some(Object::Dictionary(d)) => d.get(b"Names").ok().and_then(|o| o.as_reference().ok()),
-        _ => None,
-    };
-
-    // Mutate catalog
-    if let Some(Object::Dictionary(catalog)) = doc.objects.get_mut(&catalog_id) {
-        if catalog.remove(b"OpenAction").is_some() {
-            report.removed_actions += 1;
-        }
-        if catalog.remove(b"AA").is_some() {
-            report.removed_actions += 1;
-        }
+    for obj in doc.objects.values_mut() {
+        strip_actions(obj, &dangerous, report);
     }
 
-    // Remove JavaScript from Names tree
-    if let Some(nid) = names_id {
-        remove_javascript_from_names(doc, nid, report);
-    }
+    // Detached action objects are now unreachable; drop them so that only
+    // script bodies still referenced from somewhere unexpected remain.
+    doc.prune_objects();
 
-    // Pages: remove AA from each page and sanitize annotations
-    let page_map: Vec<ObjectId> = doc.get_pages().values().copied().collect();
-    for page_id in page_map {
-        if let Some(Object::Dictionary(page)) = doc.objects.get_mut(&page_id) {
-            if page.remove(b"AA").is_some() {
-                report.removed_actions += 1;
-            }
-        }
-        let annot_ids = collect_annot_ids(doc, page_id);
-        for annot_id in annot_ids {
-            sanitize_annotation(doc, annot_id, report);
-        }
-    }
-
-    // AcroForm
-    let acroform_id = match doc.objects.get(&catalog_id) {
-        Some(Object::Dictionary(d)) => {
-            d.get(b"AcroForm").ok().and_then(|o| o.as_reference().ok())
-        }
-        _ => None,
-    };
-    if let Some(afid) = acroform_id {
-        sanitize_acroform(doc, afid, report);
+    for obj in doc.objects.values_mut() {
+        strip_leftover_js(obj, report);
     }
 }
 
-fn remove_javascript_from_names(doc: &mut Document, names_id: ObjectId, report: &mut SanitizeReport) {
-    // Remove /JavaScript key from the Names dict
-    if let Some(Object::Dictionary(names_dict)) = doc.objects.get_mut(&names_id) {
-        if names_dict.remove(b"JavaScript").is_some() {
+fn is_dangerous_action(dict: &Dictionary) -> bool {
+    matches!(
+        dict.get(b"S"),
+        Ok(Object::Name(n)) if DANGEROUS_ACTION_SUBTYPES.contains(&n.as_slice())
+    )
+}
+
+fn is_dangerous_value(value: &Object, dangerous: &HashSet<ObjectId>) -> bool {
+    match value {
+        Object::Reference(id) => dangerous.contains(id),
+        Object::Dictionary(d) => is_dangerous_action(d),
+        Object::Array(arr) => arr.iter().any(|v| is_dangerous_value(v, dangerous)),
+        _ => false,
+    }
+}
+
+fn strip_actions(obj: &mut Object, dangerous: &HashSet<ObjectId>, report: &mut SanitizeReport) {
+    let dict = match obj {
+        Object::Dictionary(d) => d,
+        Object::Stream(s) => &mut s.dict,
+        Object::Array(arr) => {
+            for v in arr.iter_mut() {
+                strip_actions(v, dangerous, report);
+            }
+            return;
+        }
+        _ => return,
+    };
+
+    // Trigger dictionaries: always removed.
+    for key in [b"AA".as_slice(), b"OpenAction"] {
+        if dict.remove(key).is_some() {
+            report.removed_actions += 1;
+        }
+    }
+    // Document-level JavaScript name tree and XFA forms (which carry scripts).
+    for key in [b"JavaScript".as_slice(), b"XFA"] {
+        if dict.remove(key).is_some() {
             report.removed_javascript += 1;
         }
+    }
+    // Single actions and action chains: removed only when dangerous, so that
+    // ordinary internal links (GoTo) keep working.
+    for key in [b"A".as_slice(), b"Next"] {
+        let remove = dict
+            .get(key)
+            .map(|v| is_dangerous_value(v, dangerous))
+            .unwrap_or(false);
+        if remove {
+            dict.remove(key);
+            report.removed_actions += 1;
+        }
+    }
+
+    for (_, v) in dict.iter_mut() {
+        strip_actions(v, dangerous, report);
+    }
+}
+
+fn strip_leftover_js(obj: &mut Object, report: &mut SanitizeReport) {
+    let dict = match obj {
+        Object::Dictionary(d) => d,
+        Object::Stream(s) => &mut s.dict,
+        Object::Array(arr) => {
+            for v in arr.iter_mut() {
+                strip_leftover_js(v, report);
+            }
+            return;
+        }
+        _ => return,
+    };
+    if dict.remove(b"JS").is_some() {
+        report.removed_javascript += 1;
+    }
+    for (_, v) in dict.iter_mut() {
+        strip_leftover_js(v, report);
+    }
+}
+
+/// True if `obj` or any dictionary nested inside it has one of `keys`.
+fn has_key_deep(obj: &Object, keys: &[&[u8]]) -> bool {
+    match obj {
+        Object::Dictionary(d) => {
+            keys.iter().any(|k| d.has(k)) || d.iter().any(|(_, v)| has_key_deep(v, keys))
+        }
+        Object::Stream(s) => {
+            keys.iter().any(|k| s.dict.has(k)) || s.dict.iter().any(|(_, v)| has_key_deep(v, keys))
+        }
+        Object::Array(arr) => arr.iter().any(|v| has_key_deep(v, keys)),
+        _ => false,
     }
 }
 
@@ -288,15 +355,9 @@ fn collect_annot_ids(doc: &Document, page_id: ObjectId) -> Vec<ObjectId> {
         _ => None,
     };
     match annots_obj {
-        Some(Object::Array(arr)) => arr
-            .iter()
-            .filter_map(|o| o.as_reference().ok())
-            .collect(),
+        Some(Object::Array(arr)) => arr.iter().filter_map(|o| o.as_reference().ok()).collect(),
         Some(Object::Reference(id)) => match doc.objects.get(&id) {
-            Some(Object::Array(arr)) => arr
-                .iter()
-                .filter_map(|o| o.as_reference().ok())
-                .collect(),
+            Some(Object::Array(arr)) => arr.iter().filter_map(|o| o.as_reference().ok()).collect(),
             _ => vec![],
         },
         _ => vec![],
@@ -315,111 +376,6 @@ const DANGEROUS_ACTION_SUBTYPES: &[&[u8]] = &[
     b"Movie",
     b"Sound",
 ];
-
-fn action_subtype_is_dangerous(doc: &Document, action_obj: &Object) -> bool {
-    let action_id = match action_obj.as_reference() {
-        Ok(id) => id,
-        Err(_) => return false,
-    };
-    let action_dict = match doc.objects.get(&action_id) {
-        Some(Object::Dictionary(d)) => d,
-        _ => return false,
-    };
-    let subtype = match action_dict.get(b"S").ok() {
-        Some(Object::Name(n)) => n.as_slice(),
-        _ => return false,
-    };
-    DANGEROUS_ACTION_SUBTYPES
-        .iter()
-        .any(|&ds| ds == subtype)
-}
-
-fn sanitize_annotation(doc: &mut Document, annot_id: ObjectId, report: &mut SanitizeReport) {
-    // Check /A dangerousness before mutating
-    let a_dangerous = match doc.objects.get(&annot_id) {
-        Some(Object::Dictionary(d)) => d
-            .get(b"A")
-            .ok()
-            .map(|a| action_subtype_is_dangerous(doc, a))
-            .unwrap_or(false),
-        _ => return,
-    };
-
-    if let Some(Object::Dictionary(dict)) = doc.objects.get_mut(&annot_id) {
-        if dict.remove(b"AA").is_some() {
-            report.removed_actions += 1;
-        }
-        if a_dangerous {
-            dict.remove(b"A");
-            report.removed_actions += 1;
-        }
-    }
-}
-
-fn sanitize_acroform(doc: &mut Document, acroform_id: ObjectId, report: &mut SanitizeReport) {
-    if let Some(Object::Dictionary(dict)) = doc.objects.get_mut(&acroform_id) {
-        if dict.remove(b"AA").is_some() {
-            report.removed_actions += 1;
-        }
-        if dict.remove(b"XFA").is_some() {
-            report.removed_javascript += 1;
-        }
-    }
-
-    // Walk fields
-    let fields = match doc.objects.get(&acroform_id) {
-        Some(Object::Dictionary(d)) => d
-            .get(b"Fields")
-            .ok()
-            .and_then(|o| match o {
-                Object::Array(arr) => Some(arr.iter().filter_map(|o| o.as_reference().ok()).collect::<Vec<_>>()),
-                _ => None,
-            })
-            .unwrap_or_default(),
-        _ => vec![],
-    };
-
-    for field_id in fields {
-        sanitize_field(doc, field_id, report);
-    }
-}
-
-fn sanitize_field(doc: &mut Document, field_id: ObjectId, report: &mut SanitizeReport) {
-    let a_dangerous = match doc.objects.get(&field_id) {
-        Some(Object::Dictionary(d)) => d
-            .get(b"A")
-            .ok()
-            .map(|a| action_subtype_is_dangerous(doc, a))
-            .unwrap_or(false),
-        _ => return,
-    };
-
-    let kids = match doc.objects.get(&field_id) {
-        Some(Object::Dictionary(d)) => d
-            .get(b"Kids")
-            .ok()
-            .and_then(|o| match o {
-                Object::Array(arr) => Some(arr.iter().filter_map(|o| o.as_reference().ok()).collect::<Vec<_>>()),
-                _ => None,
-            })
-            .unwrap_or_default(),
-        _ => vec![],
-    };
-
-    if let Some(Object::Dictionary(dict)) = doc.objects.get_mut(&field_id) {
-        if dict.remove(b"AA").is_some() {
-            report.removed_actions += 1;
-        }
-        if a_dangerous {
-            dict.remove(b"A");
-            report.removed_actions += 1;
-        }
-    }
-
-    for kid_id in kids {
-        sanitize_field(doc, kid_id, report);
-    }
-}
 
 // ---- Embedded files pass ----
 
@@ -529,24 +485,18 @@ fn strip_external_links_pass(doc: &mut Document, report: &mut SanitizeReport) {
                         .unwrap_or(false);
 
                     if is_link {
-                        let action_subtype = d
-                            .get(b"A")
-                            .ok()
-                            .and_then(|a| {
-                                let a_id = a.as_reference().ok()?;
-                                let adict = doc.objects.get(&a_id)?;
-                                if let Object::Dictionary(ad) = adict {
-                                    if let Ok(Object::Name(s)) = ad.get(b"S") {
-                                        return Some(s.clone());
-                                    }
+                        let action_subtype = d.get(b"A").ok().and_then(|a| {
+                            let a_id = a.as_reference().ok()?;
+                            let adict = doc.objects.get(&a_id)?;
+                            if let Object::Dictionary(ad) = adict {
+                                if let Ok(Object::Name(s)) = ad.get(b"S") {
+                                    return Some(s.clone());
                                 }
-                                None
-                            });
+                            }
+                            None
+                        });
 
-                        match action_subtype.as_deref() {
-                            Some(b"URI") | Some(b"GoToR") => true,
-                            _ => false,
-                        }
+                        matches!(action_subtype.as_deref(), Some(b"URI") | Some(b"GoToR"))
                     } else {
                         false
                     }
@@ -595,9 +545,7 @@ fn collect_image_ids(doc: &Document) -> Vec<ObjectId> {
             }
             let cs = stream.dict.get(b"ColorSpace").ok()?;
             let cs_ok = match cs {
-                Object::Name(n) => {
-                    n.as_slice() == b"DeviceRGB" || n.as_slice() == b"DeviceGray"
-                }
+                Object::Name(n) => n.as_slice() == b"DeviceRGB" || n.as_slice() == b"DeviceGray",
                 _ => false,
             };
             if !cs_ok {
@@ -643,9 +591,14 @@ fn compress_image(doc: &mut Document, id: ObjectId, quality: u8, report: &mut Sa
         _ => return,
     };
 
-    let raw = match stream.decompressed_content() {
-        Ok(bytes) => bytes,
-        Err(_) => return, // skip undecodable streams
+    let channels: usize = if cs.as_slice() == b"DeviceRGB" { 3 } else { 1 };
+    let expected_len = w as usize * h as usize * channels;
+    let raw = match raw_image_samples(&stream) {
+        Some(mut bytes) if bytes.len() >= expected_len => {
+            bytes.truncate(expected_len);
+            bytes
+        }
+        _ => return, // skip undecodable or malformed streams
     };
 
     // Re-encode as JPEG
@@ -664,8 +617,9 @@ fn compress_image(doc: &mut Document, id: ObjectId, quality: u8, report: &mut Sa
         return;
     }
 
-    // Only replace if smaller (< 95% of original)
-    let original_len = raw.len();
+    // Only replace if meaningfully smaller than what is stored today
+    // (< 95% of the encoded stream, not of the raw samples).
+    let original_len = stream.content.len();
     if jpeg_bytes.len() >= (original_len * 95 / 100) {
         return;
     }
@@ -677,6 +631,44 @@ fn compress_image(doc: &mut Document, id: ObjectId, quality: u8, report: &mut Sa
         s.dict.remove(b"DecodeParms");
         report.images_recompressed += 1;
     }
+}
+
+/// Raw 8-bit samples of an image XObject. lopdf's `decompressed_content`
+/// refuses image streams outright, so decode the supported cases here:
+/// unfiltered, or a single FlateDecode without a predictor.
+fn raw_image_samples(stream: &Stream) -> Option<Vec<u8>> {
+    if !stream.dict.has(b"Filter") {
+        return Some(stream.content.clone());
+    }
+    let filters = stream.filters().ok()?;
+    if filters.len() != 1 || filters[0] != b"FlateDecode" || stream.dict.has(b"DecodeParms") {
+        return None;
+    }
+    let mut out = Vec::new();
+    flate2::read::ZlibDecoder::new(stream.content.as_slice())
+        .read_to_end(&mut out)
+        .ok()?;
+    Some(out)
+}
+
+/// Check that a content stream can be decoded. Streams without a filter are
+/// plain bytes (lopdf leaves small streams uncompressed), and filters lopdf
+/// cannot decode are not evidence of corruption, so both pass.
+fn check_stream_decodes(stream: &Stream) -> Result<(), String> {
+    if !stream.dict.has(b"Filter") {
+        return Ok(());
+    }
+    let filters = stream.filters().map_err(|e| format!("bad /Filter: {e}"))?;
+    let supported = filters
+        .iter()
+        .all(|f| matches!(*f, b"FlateDecode" | b"LZWDecode" | b"ASCII85Decode"));
+    if !supported {
+        return Ok(());
+    }
+    stream
+        .decompressed_content()
+        .map(|_| ())
+        .map_err(|e| e.to_string())
 }
 
 /// Verify that a saved PDF is valid (used in the pipeline after saving temp)
@@ -702,7 +694,13 @@ pub fn verify_pdf(
     let catalog = doc
         .objects
         .get(&catalog_id)
-        .and_then(|o| if let Object::Dictionary(d) = o { Some(d) } else { None })
+        .and_then(|o| {
+            if let Object::Dictionary(d) = o {
+                Some(d)
+            } else {
+                None
+            }
+        })
         .ok_or("catalog not a dict")?;
 
     catalog
@@ -730,7 +728,7 @@ pub fn verify_pdf(
         };
         for cid in contents {
             if let Some(Object::Stream(s)) = doc.objects.get(&cid) {
-                s.decompressed_content()
+                check_stream_decodes(s)
                     .map_err(|e| format!("content stream {cid:?} failed to decompress: {e}"))?;
             }
         }
@@ -738,15 +736,13 @@ pub fn verify_pdf(
 
     // If remove_scripts was on, verify no JS/AA/OpenAction remain
     if settings.remove_scripts {
-        for (_, obj) in &doc.objects {
-            let dict = match obj {
-                Object::Dictionary(d) => d,
-                Object::Stream(s) => &s.dict,
-                _ => continue,
-            };
-            if dict.get(b"JavaScript").is_ok() || dict.get(b"JS").is_ok() {
-                return Err("JavaScript key still present after sanitization".to_string());
-            }
+        let script_keys: &[&[u8]] = &[b"JavaScript", b"JS", b"AA", b"OpenAction"];
+        if doc
+            .objects
+            .values()
+            .any(|obj| has_key_deep(obj, script_keys))
+        {
+            return Err("script or trigger action still present after sanitization".to_string());
         }
     }
 

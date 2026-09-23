@@ -31,6 +31,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+          cache-on-failure: true
 
       - name: Install pnpm
         uses: pnpm/action-setup@v4
@@ -69,10 +70,14 @@ jobs:
         if: steps.cache-cargo-xwin.outputs.cache-hit != 'true'
         run: cargo install cargo-xwin --locked
 
+      - name: Cache MSVC CRT and Windows SDK
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/cargo-xwin
+          key: xwin-sdk-${{ runner.os }}-${{ matrix.target }}
+
       - name: Build Windows binary
-        run: cd src-tauri && cargo xwin build --release --target ${{ matrix.target }}
-        env:
-          TAURI_CONFIG: '{"build":{"devUrl":null}}'
+        run: cd src-tauri && cargo xwin build --release --features custom-protocol --target ${{ matrix.target }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

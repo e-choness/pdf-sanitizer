@@ -58,7 +58,7 @@ docker rm extract
 ### Local Build
 ```bash
 pnpm build
-cd src-tauri && cargo build --release
+cd src-tauri && cargo build --release --features custom-protocol
 ```
 
 ---
