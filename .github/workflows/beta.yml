@@ -76,6 +76,20 @@ jobs:
           path: ~/.cache/cargo-xwin
           key: xwin-sdk-${{ runner.os }}-${{ matrix.target }}
 
+      # tauri-winres compiles the Windows resources (icon, version info) with
+      # llvm-rc when cross-compiling. The runner ships LLVM under
+      # /usr/lib/llvm-*/bin without putting llvm-rc on PATH.
+      - name: Put llvm-rc on PATH
+        run: |
+          if ! command -v llvm-rc >/dev/null; then
+            dir=$(printf '%s\n' /usr/lib/llvm-*/bin | sort -V | tail -n1)
+            if [ -n "$dir" ] && [ -x "$dir/llvm-rc" ]; then
+              echo "$dir" >> "$GITHUB_PATH"
+            else
+              sudo apt-get update && sudo apt-get install -y llvm
+            fi
+          fi
+
       - name: Build Windows binary
         run: cd src-tauri && cargo xwin build --release --features custom-protocol --target ${{ matrix.target }}
 
